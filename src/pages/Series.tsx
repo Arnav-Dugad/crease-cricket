@@ -2,6 +2,8 @@ import { motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MatchCard } from '../components/MatchCard'
+import { SeasonInsights, SeasonLeaders } from '../components/SeasonStats'
+import { useSeasonAggregate } from '../lib/season'
 import { LeagueLogo, TeamLogo } from '../components/Media'
 import { NewsCard } from '../components/NewsCard'
 import { CardSkeleton, CountUp, Empty, ErrorState, Reveal, Segmented, Skel, pageMotion } from '../components/UI'
@@ -110,7 +112,7 @@ function Standings({ tables }: { tables: { name: string; rows: Row[] }[] }) {
                       <td>
                         <div className="row gap-10" style={{ justifyContent: 'flex-end' }}>
                           <div style={{ width: 64, height: 6, borderRadius: 99, background: 'var(--fill-2)', overflow: 'hidden' }} className="hide-sm">
-                            <motion.div style={{ height: '100%', background: r.color, borderRadius: 99 }} initial={{ width: 0 }} whileInView={{ width: `${(r.pts / maxPts) * 100}%` }} viewport={{ once: true }} transition={{ duration: 1, delay: i * 0.04 }} />
+                            <motion.div style={{ height: '100%', background: r.color, borderRadius: 99, width: `${(r.pts / maxPts) * 100}%`, transformOrigin: 'left center' }} initial={{ scaleX: 0 }} whileInView={{ scaleX: 1 }} viewport={{ once: true }} transition={{ duration: 1, delay: i * 0.04 }} />
                           </div>
                           <b>{r.pts}</b>
                         </div>
@@ -127,7 +129,7 @@ function Standings({ tables }: { tables: { name: string; rows: Row[] }[] }) {
   )
 }
 
-type Tab = 'fixtures' | 'results' | 'table' | 'news'
+type Tab = 'fixtures' | 'results' | 'table' | 'stats' | 'insights' | 'news'
 
 export default function Series() {
   const { league = '' } = useParams()
@@ -143,6 +145,7 @@ export default function Series() {
   const [tab, setTab] = useState<Tab | null>(null)
   const active: Tab = tab ?? (upcoming.length ? 'fixtures' : tables.length ? 'table' : 'results')
   const done = results.length
+  const season = useSeasonAggregate(league, matches, active === 'stats' || active === 'insights')
   const totalM = matches.length
   const first = matches.reduce<string | null>((m, x) => (!m || x.date < m ? x.date : m), null)
   const last = matches.reduce<string | null>((m, x) => (!m || x.date > m ? x.date : m), null)
@@ -151,6 +154,7 @@ export default function Series() {
     { value: 'fixtures', label: `Fixtures${upcoming.length ? ` · ${upcoming.length}` : ''}` },
     { value: 'results', label: `Results${results.length ? ` · ${results.length}` : ''}` },
     ...(tables.length ? [{ value: 'table' as Tab, label: 'Table' }] : []),
+    ...(results.length >= 2 ? [{ value: 'stats' as Tab, label: 'Stats' }, { value: 'insights' as Tab, label: 'Insights' }] : []),
     ...(relatedNews.length ? [{ value: 'news' as Tab, label: 'News' }] : []),
   ]
 
@@ -211,6 +215,10 @@ export default function Series() {
         </div>
       ) : active === 'table' ? (
         <Standings tables={tables} />
+      ) : active === 'stats' ? (
+        <SeasonLeaders s={season} />
+      ) : active === 'insights' ? (
+        <SeasonInsights s={season} />
       ) : active === 'news' ? (
         <div className="grid auto">
           {relatedNews.map((a) => (

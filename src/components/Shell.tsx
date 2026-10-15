@@ -3,54 +3,38 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { addDays, fetchJSON, useApi, ymd } from '../lib/api'
 import { groupsFromScorepanel, shortLeague } from '../lib/normalize'
+import { applyPrefs, prefsStore, usePrefs, type Prefs } from '../lib/prefs'
 import type { LeagueGroup } from '../lib/types'
 import { BrandMark, Icon, type IconName } from './Icon'
-import { TeamLogo, LeagueLogo } from './Media'
-import { spring } from './UI'
+import { LiveTicker } from './LiveTicker'
+import { Avatar, LeagueLogo, TeamLogo } from './Media'
+import { Sheet } from './Sheet'
+import { Segmented, spring } from './UI'
 
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: '/', label: 'Home', icon: 'home' },
   { to: '/matches', label: 'Matches', icon: 'calendar' },
   { to: '/series', label: 'Series', icon: 'trophy' },
+  { to: '/rankings', label: 'Rankings', icon: 'medal' },
   { to: '/news', label: 'News', icon: 'news' },
 ]
-
-type Theme = 'auto' | 'light' | 'dark'
-
-function useTheme(): [Theme, () => void] {
-  const [theme, setTheme] = useState<Theme>(() => {
-    try {
-      return (localStorage.getItem('crease-theme') as Theme) || 'auto'
-    } catch {
-      return 'auto'
-    }
-  })
-  useEffect(() => {
-    const root = document.documentElement
-    if (theme === 'auto') root.removeAttribute('data-theme')
-    else root.setAttribute('data-theme', theme)
-    try {
-      localStorage.setItem('crease-theme', theme)
-    } catch {
-      /* storage unavailable */
-    }
-    const dark = theme === 'dark' || (theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#000000' : '#f5f5f7')
-  }, [theme])
-  const cycle = () => {
-    const sysDark = matchMedia('(prefers-color-scheme: dark)').matches
-    const isDark = theme === 'dark' || (theme === 'auto' && sysDark)
-    setTheme(isDark ? 'light' : 'dark')
-  }
-  return [theme, cycle]
-}
 
 const isActive = (path: string, to: string) => (to === '/' ? path === '/' : path.startsWith(to))
 
 export function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
-  const [, cycleTheme] = useTheme()
+  const prefs = usePrefs()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  useEffect(() => {
+    applyPrefs(prefs)
+    if (prefs.theme !== 'auto') return
+    const mq = matchMedia('(prefers-color-scheme: dark)')
+    const on = () => applyPrefs(prefsStore.get())
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [prefs])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -58,7 +42,7 @@ export function Shell({ children }: { children: ReactNode }) {
         e.preventDefault()
         setPaletteOpen((o) => !o)
       }
-      if (e.key === '/' && !(e.target as HTMLElement).closest('input,textarea')) {
+      if (e.key === '/' && !(e.target as HTMLElement).closest('input,textarea,select')) {
         e.preventDefault()
         setPaletteOpen(true)
       }
@@ -80,8 +64,12 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="grain" />
       </div>
 
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+
       <header className="topnav glass">
-        <Link to="/" className="brand" aria-label="Crease home">
+        <Link to="/" className="brand" aria-label="Crease home" viewTransition>
           <span className="brand-mark">
             <BrandMark size={17} />
           </span>
@@ -89,7 +77,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </Link>
         <nav className="navlinks" aria-label="Primary">
           {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'} className={() => `navlink ${isActive(pathname, n.to) ? 'active' : ''}`}>
+            <NavLink key={n.to} to={n.to} end={n.to === '/'} viewTransition className={() => `navlink ${isActive(pathname, n.to) ? 'active' : ''}`}>
               {isActive(pathname, n.to) && <motion.span layoutId="nav-pill" className="pill-bg" transition={spring} />}
               {n.label}
             </NavLink>
@@ -101,49 +89,145 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="label">Search players, teams, series</span>
           <span className="kbd">⌘K</span>
         </button>
-        <button className="icon-btn" onClick={cycleTheme} aria-label="Toggle dark mode">
-          <Icon name="moon" size={19} className="theme-moon" />
+        <Link to="/multi" className="icon-btn hide-sm" aria-label="Multi-match view" title="Multi-match view" viewTransition>
+          <Icon name="split" size={19} />
+        </Link>
+        <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Display settings" title="Display settings">
+          <Icon name="sliders" size={19} />
         </button>
       </header>
 
-      <main>{children}</main>
+      <LiveTicker />
+      <OfflineBanner />
+
+      <main id="main">{children}</main>
 
       <nav className="tabbar glass" aria-label="Tabs">
         {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={() => `tab ${isActive(pathname, n.to) ? 'active' : ''}`}>
+          <NavLink key={n.to} to={n.to} end={n.to === '/'} viewTransition className={() => `tab ${isActive(pathname, n.to) ? 'active' : ''}`}>
             {isActive(pathname, n.to) && <motion.span layoutId="tab-pill" className="pill-bg" transition={spring} />}
             <Icon name={n.icon} size={22} />
             {n.label}
           </NavLink>
         ))}
-        <button className="tab" onClick={() => setPaletteOpen(true)}>
-          <Icon name="search" size={22} />
-          Search
-        </button>
       </nav>
 
-      <AnimatePresence>{paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}</AnimatePresence>
+      <Sheet open={paletteOpen} onClose={() => setPaletteOpen(false)} label="Search">
+        <CommandPalette onClose={() => setPaletteOpen(false)} />
+      </Sheet>
+      <Sheet open={settingsOpen} onClose={() => setSettingsOpen(false)} label="Display settings" width={440}>
+        <SettingsPanel onClose={() => setSettingsOpen(false)} />
+      </Sheet>
 
-      <footer className="page" style={{ paddingTop: 0, paddingBottom: 140 }}>
+      <footer className="page site-footer">
         <div className="divider" style={{ marginBottom: 20 }} />
         <div className="foot faint row wrap gap-16 between">
-          <span>Crease · Live cricket, beautifully. Data from public ESPNcricinfo feeds & Wikipedia. Logos and images belong to their respective owners.</span>
-          <span>Win probabilities are statistical model estimates.</span>
+          <span>
+            Crease · Live cricket, beautifully. Data: ESPNcricinfo public feeds, Cricsheet (ODC-BY), Wikipedia & Wikidata, TheSportsDB, Open-Meteo. Logos and images belong to
+            their respective owners.
+          </span>
+          <span>Win probabilities and projections are statistical model estimates.</span>
         </div>
       </footer>
     </>
   )
 }
 
+function OfflineBanner() {
+  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+    }
+  }, [])
+  return (
+    <AnimatePresence>
+      {!online && (
+        <motion.div className="offline-banner glass" initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} role="status">
+          <Icon name="cloud" size={16} /> You’re offline — showing the last saved scores
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
+/* ---------------- Settings ---------------- */
+
+function SettingsPanel({ onClose }: { onClose: () => void }) {
+  const p = usePrefs()
+  const set = (v: Partial<Prefs>) => prefsStore.set(v)
+  return (
+    <div className="stack gap-20" style={{ padding: '20px 22px 26px' }}>
+      <div className="row between">
+        <div className="title3">Display</div>
+        <button className="icon-btn" onClick={onClose} aria-label="Close settings">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div className="stack gap-8">
+        <div className="foot muted">Appearance</div>
+        <Segmented
+          value={p.theme}
+          onChange={(theme) => set({ theme })}
+          layout="set-theme"
+          options={[
+            { value: 'auto', label: 'Automatic' },
+            { value: 'light', label: 'Light' },
+            { value: 'dark', label: 'Dark' },
+          ]}
+        />
+      </div>
+      <div className="stack gap-8">
+        <div className="foot muted">Contrast</div>
+        <Segmented
+          value={p.contrast}
+          onChange={(contrast) => set({ contrast })}
+          layout="set-contrast"
+          options={[
+            { value: 'standard', label: 'Standard' },
+            { value: 'high', label: 'High contrast' },
+          ]}
+        />
+        <div className="cap faint">High contrast uses solid surfaces, stronger borders and pure text colours.</div>
+      </div>
+      <div className="stack gap-8">
+        <div className="foot muted">Motion</div>
+        <Segmented
+          value={p.motion}
+          onChange={(motion) => set({ motion })}
+          layout="set-motion"
+          options={[
+            { value: 'full', label: 'Full' },
+            { value: 'reduced', label: 'Reduced' },
+          ]}
+        />
+      </div>
+      <label className="row between" style={{ cursor: 'pointer' }}>
+        <span className="stack">
+          <span className="sub">Haptics</span>
+          <span className="cap faint">Vibrate on wickets and boundaries (supported phones)</span>
+        </span>
+        <input type="checkbox" className="switch" checked={p.haptics} onChange={(e) => set({ haptics: e.target.checked })} />
+      </label>
+    </div>
+  )
+}
+
 /* ---------------- Command palette ---------------- */
 
 interface Result {
-  kind: 'player' | 'match' | 'series' | 'page'
+  kind: 'player' | 'match' | 'series' | 'page' | 'team'
   title: string
   sub?: string
   to: string
   img?: string | null
   color?: string
+  id?: string
 }
 
 function CommandPalette({ onClose }: { onClose: () => void }) {
@@ -158,12 +242,8 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
   const d2 = useApi<unknown[]>(`/api/day/${ymd(addDays(today, 1))}`)
 
   useEffect(() => {
-    input.current?.focus()
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
+    const t = setTimeout(() => input.current?.focus(), 60)
+    return () => clearTimeout(t)
   }, [])
 
   useEffect(() => {
@@ -175,7 +255,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
       fetchJSON<typeof players>(`/api/search?q=${encodeURIComponent(q.trim())}`)
         .then(setPlayers)
         .catch(() => setPlayers([]))
-    }, 180)
+    }, 160)
     return () => clearTimeout(t)
   }, [q])
 
@@ -187,20 +267,27 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
     if (!s) {
       out.push(
         { kind: 'page', title: 'Live & today’s matches', to: '/matches', sub: 'Schedule' },
+        { kind: 'page', title: 'ICC rankings & WTC table', to: '/rankings', sub: 'Rankings' },
+        { kind: 'page', title: 'Multi-match view', to: '/multi', sub: 'Follow several games at once' },
         { kind: 'page', title: 'All series', to: '/series', sub: 'Competitions' },
-        { kind: 'page', title: 'Top stories', to: '/news', sub: 'News' },
       )
       for (const g of groups.slice(0, 5)) out.push({ kind: 'series', title: shortLeague(g.name), sub: `${g.matches.length} match${g.matches.length > 1 ? 'es' : ''}`, to: `/series/${g.id}`, img: g.logo })
       return out
     }
-    for (const p of players) out.push({ kind: 'player', title: p.name, sub: p.team ?? 'Player', to: `/player/${p.id}`, img: p.teamLogo })
+    for (const p of players) out.push({ kind: 'player', title: p.name, sub: p.team ?? 'Player', to: `/player/${p.id}`, img: p.teamLogo, id: p.id })
     const seen = new Set<string>()
+    const teamsSeen = new Set<string>()
     for (const g of groups) {
       if (g.name.toLowerCase().includes(s) && !seen.has(g.id)) {
         seen.add(g.id)
         out.push({ kind: 'series', title: shortLeague(g.name), sub: 'Series', to: `/series/${g.id}`, img: g.logo })
       }
       for (const m of g.matches) {
+        for (const t of m.teams)
+          if (!teamsSeen.has(t.id) && t.name !== 'TBC' && (t.name.toLowerCase().includes(s) || t.abbr.toLowerCase() === s)) {
+            teamsSeen.add(t.id)
+            out.push({ kind: 'team', title: t.name, sub: 'Team', to: `/team/${t.id}/${encodeURIComponent(t.name)}`, img: t.logo, color: t.color })
+          }
         if (m.title.toLowerCase().includes(s) || m.teams.some((t) => t.abbr.toLowerCase() === s))
           out.push({ kind: 'match', title: m.title, sub: `${shortLeague(m.leagueName)} · ${m.status || m.detail}`, to: `/match/${m.leagueId}/${m.id}`, img: m.teams[0].logo, color: m.teams[0].color })
       }
@@ -211,65 +298,58 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
   useEffect(() => setSel(0), [q])
 
   const go = (r: Result) => {
-    nav(r.to)
+    nav(r.to, { viewTransition: true })
     onClose()
   }
 
   return (
-    <motion.div className="overlay" onMouseDown={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-      <motion.div
-        className="palette"
-        onMouseDown={(e) => e.stopPropagation()}
-        initial={{ opacity: 0, scale: 0.96, y: -10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: -6 }}
-        transition={spring}
-      >
-        <div style={{ position: 'relative' }}>
-          <Icon name="search" size={20} style={{ position: 'absolute', left: 20, top: 20, color: 'var(--text-3)' }} />
-          <input
-            ref={input}
-            value={q}
-            placeholder="Search players, teams, series…"
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') onClose()
-              if (e.key === 'ArrowDown') {
-                e.preventDefault()
-                setSel((s) => Math.min(results.length - 1, s + 1))
-              }
-              if (e.key === 'ArrowUp') {
-                e.preventDefault()
-                setSel((s) => Math.max(0, s - 1))
-              }
-              if (e.key === 'Enter' && results[sel]) go(results[sel])
-            }}
-          />
-        </div>
-        <div className="results">
-          {results.length === 0 && <div className="empty sub">{q.length < 2 ? 'Type to search' : 'No results'}</div>}
-          {results.map((r, i) => (
-            <div key={r.kind + r.to + i} className={`item ${i === sel ? 'sel' : ''}`} onMouseEnter={() => setSel(i)} onClick={() => go(r)}>
-              {r.kind === 'series' ? (
-                <LeagueLogo src={r.img ?? undefined} name={r.title} size={34} />
-              ) : r.kind === 'page' ? (
-                <span className="logo" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--fill-2)' }}>
-                  <Icon name="chevron" size={16} />
-                </span>
-              ) : (
-                <TeamLogo src={r.img} name={r.title} color={r.color} size={34} />
-              )}
-              <div className="grow">
-                <div className="ellipsis" style={{ fontWeight: 600, fontSize: 15 }}>
-                  {r.title}
-                </div>
-                <div className="ellipsis foot faint">{r.sub}</div>
+    <div className="palette">
+      <div style={{ position: 'relative' }}>
+        <Icon name="search" size={20} style={{ position: 'absolute', left: 20, top: 20, color: 'var(--text-3)' }} />
+        <input
+          ref={input}
+          value={q}
+          placeholder="Search players, teams, series…"
+          aria-label="Search"
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setSel((s) => Math.min(results.length - 1, s + 1))
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setSel((s) => Math.max(0, s - 1))
+            }
+            if (e.key === 'Enter' && results[sel]) go(results[sel])
+          }}
+        />
+      </div>
+      <div className="results">
+        {results.length === 0 && <div className="empty sub">{q.length < 2 ? 'Type to search' : 'No results'}</div>}
+        {results.map((r, i) => (
+          <div key={r.kind + r.to + i} className={`item ${i === sel ? 'sel' : ''}`} onMouseEnter={() => setSel(i)} onClick={() => go(r)}>
+            {r.kind === 'series' ? (
+              <LeagueLogo src={r.img ?? undefined} name={r.title} size={34} />
+            ) : r.kind === 'player' ? (
+              <Avatar id={r.id} name={r.title} size={34} />
+            ) : r.kind === 'page' ? (
+              <span className="logo" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--fill-2)' }}>
+                <Icon name="chevron" size={16} />
+              </span>
+            ) : (
+              <TeamLogo src={r.img} name={r.title} color={r.color} size={34} />
+            )}
+            <div className="grow">
+              <div className="ellipsis" style={{ fontWeight: 600, fontSize: 15 }}>
+                {r.title}
               </div>
-              <span className="badge">{r.kind}</span>
+              <div className="ellipsis foot faint">{r.sub}</div>
             </div>
-          ))}
-        </div>
-      </motion.div>
-    </motion.div>
+            <span className="badge">{r.kind}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }

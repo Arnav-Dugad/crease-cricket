@@ -1,9 +1,9 @@
-import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { relTime } from '../lib/normalize'
 import type { Video } from '../lib/types'
 import { Icon } from './Icon'
-import { spring } from './UI'
+import { Rail } from './Rail'
+import { Sheet } from './Sheet'
 
 const dur = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
 
@@ -13,7 +13,7 @@ export function VideoRail({ videos }: { videos: Video[] }) {
   if (!list.length) return null
   return (
     <>
-      <div className="rail">
+      <Rail label="Videos">
         {list.map((v) => (
           <button key={v.id} className="card interactive" style={{ padding: 10, textAlign: 'left' }} onClick={() => setOpen(v)}>
             <div className="story-img">
@@ -30,32 +30,23 @@ export function VideoRail({ videos }: { videos: Video[] }) {
             </div>
           </button>
         ))}
-      </div>
-      <AnimatePresence>{open && <VideoModal v={open} onClose={() => setOpen(null)} />}</AnimatePresence>
-    </>
-  )
-}
-
-function VideoModal({ v, onClose }: { v: Video; onClose: () => void }) {
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', k)
-    return () => window.removeEventListener('keydown', k)
-  }, [onClose])
-  return (
-    <motion.div className="overlay" style={{ alignItems: 'center', paddingTop: 16 }} onMouseDown={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <motion.div className="video-modal" onMouseDown={(e) => e.stopPropagation()} initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={spring}>
-        <video src={v.src} poster={v.thumbnail} controls autoPlay playsInline />
-        <div className="row gap-12" style={{ padding: '14px 18px', color: 'white' }}>
-          <div className="grow">
-            <div style={{ fontWeight: 600 }}>{v.headline}</div>
-            {v.description && <div className="foot" style={{ opacity: 0.65 }}>{v.description}</div>}
+      </Rail>
+      <Sheet open={!!open} onClose={() => setOpen(null)} label={open?.headline ?? 'Video'} width={960} top="8vh" dark>
+        {open && (
+          <div className="video-modal">
+            <video src={open.src} poster={open.thumbnail} controls autoPlay playsInline />
+            <div className="row gap-12" style={{ padding: '14px 18px', color: 'white' }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600 }}>{open.headline}</div>
+                {open.description && <div className="foot" style={{ opacity: 0.65 }}>{open.description}</div>}
+              </div>
+              <button className="icon-btn" style={{ color: 'white' }} onClick={() => setOpen(null)} aria-label="Close video">
+                <Icon name="x" />
+              </button>
+            </div>
           </div>
-          <button className="icon-btn" style={{ color: 'white' }} onClick={onClose} aria-label="Close video">
-            <Icon name="x" />
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
+        )}
+      </Sheet>
+    </>
   )
 }

@@ -1,0 +1,33 @@
+name: Uptime
+
+# Checks the live site every 30 minutes. A failed run makes GitHub email the repo owner.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    env:
+      SITE: https://crease-cricket.arnavrival12.workers.dev
+    steps:
+      - name: Health endpoint
+        run: |
+          body=$(curl -fsS --max-time 20 "$SITE/api/health")
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+      - name: Pages load
+        run: |
+          for path in / /matches /rankings; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE$path")
+            echo "$path $code"
+            [ "$code" = "200" ] || exit 1
+          done
+      - name: Scores API responds
+        run: |
+          d=$(date -u +%Y%m%d)
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$SITE/api/day/$d")
+          echo "/api/day/$d $code"
+          # 502 means ESPN is blocking the edge; the site still works via the browser fallback.
+          [ "$code" = "200" ] || [ "$code" = "502" ] || exit 1

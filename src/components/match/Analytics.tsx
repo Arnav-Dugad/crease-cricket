@@ -1,5 +1,8 @@
-import { useMemo, useState } from 'react'
-import { biggestOver, isFour, isLegal, isSix, momentum, phaseStats, phasesFor, type InningsAgg } from '../../lib/analytics'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { aggregate, ballLabel, biggestOver, isFour, isLegal, isSix, momentum, phaseStats, phasesFor, winProbSeries, type InningsAgg } from '../../lib/analytics'
+import { Icon } from '../Icon'
+import { ImpactTable, PartnershipPressure } from './Impact'
+import { Simulator } from './Simulator'
 import { buildScorecards, buildSquads } from '../../lib/scorecard'
 import type { MatchCtx } from '../../pages/Match'
 import { CompareBar, Donut, Legend, Manhattan, PitchMap, RunRateChart, WagonWheel, WormChart } from '../charts/Charts'
@@ -144,6 +147,7 @@ function Players({ ctx }: { ctx: MatchCtx }) {
   const [wi, setWi] = useState(() => bowlers.reduce((m, b, i) => (b.wkts > bowlers[m].wkts || (b.wkts === bowlers[m].wkts && b.runs < bowlers[m].runs) ? i : m), 0))
   const bat = batters[bi]
   const bowl = bowlers[wi]
+  const [pitch3d, setPitch3d] = useState(false)
   return (
     <div className="grid cols-2" style={{ alignItems: 'start' }}>
       {bat && (
@@ -160,7 +164,7 @@ function Players({ ctx }: { ctx: MatchCtx }) {
             </select>
           </div>
           <div className="row gap-14" style={{ gap: 14 }}>
-            <Avatar src={bat.headshot} name={bat.name} size={56} wiki />
+            <Avatar src={bat.headshot} id={bat.id} name={bat.name} size={56} />
             <div className="grow">
               <div className="headline">{bat.name}</div>
               <div className="foot faint">{bat.out}</div>
@@ -195,7 +199,7 @@ function Players({ ctx }: { ctx: MatchCtx }) {
               <div className="foot faint" style={{ marginBottom: 8 }}>
                 Scoring zones · runs by region{lefties.has(bat.id) ? ' (left-hander, mirrored)' : ''}
               </div>
-              <WagonWheel zones={bat.wagon} color={ctx.colorOf(bat.teamId)} leftHanded={lefties.has(bat.id)} />
+              <WagonWheel zones={bat.wagon} shots={bat.wagonShots} color={ctx.colorOf(bat.teamId)} leftHanded={lefties.has(bat.id)} />
             </div>
           ) : (
             <div className="foot faint">No scoring-zone data for this innings.</div>
@@ -215,7 +219,7 @@ function Players({ ctx }: { ctx: MatchCtx }) {
             </select>
           </div>
           <div className="row gap-14" style={{ gap: 14 }}>
-            <Avatar src={bowl.headshot} name={bowl.name} size={56} wiki />
+            <Avatar src={bowl.headshot} id={bowl.id} name={bowl.name} size={56} />
             <div className="grow">
               <div className="headline">{bowl.name}</div>
               <div className="foot faint">
@@ -245,9 +249,19 @@ function Players({ ctx }: { ctx: MatchCtx }) {
               )}
             </div>
           )}
+          <div className="row between">
+            <span className="foot muted">Pitch map</span>
+            <div className="row gap-6">
+              {(['2D', '3D'] as const).map((v) => (
+                <button key={v} className={`chip ${(v === '3D') === pitch3d ? 'on' : ''}`} style={{ height: 28, padding: '0 12px', fontSize: 12 }} onClick={() => setPitch3d(v === '3D')}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="row gap-24 wrap center">
-            <PitchMap map={bowl.pitchR} title="To right-handers" />
-            <PitchMap map={bowl.pitchL} title="To left-handers" />
+            <PitchMap map={bowl.pitchR} title="To right-handers" threeD={pitch3d} />
+            <PitchMap map={bowl.pitchL} title="To left-handers" threeD={pitch3d} />
           </div>
         </div>
       )}
@@ -257,8 +271,65 @@ function Players({ ctx }: { ctx: MatchCtx }) {
 
 type Chart = 'worm' | 'manhattan' | 'rr'
 
+/** Scrub (or play) through the match ball by ball; every chart below rebuilds to that moment. */
+function ReplayBar({ total, value, onChange, label }: { total: number; value: number; onChange: (v: number) => void; label: string }) {
+  const [playing, setPlaying] = useState(false)
+  const timer = useRef<ReturnType<typeof setInterval>>(undefined)
+  useEffect(() => {
+    if (!playing) return
+    timer.current = setInterval(() => {
+      onChange(-1) // sentinel: advance by one over
+    }, 380)
+    return () => clearInterval(timer.current)
+  }, [playing, onChange])
+  useEffect(() => {
+    if (value >= total) setPlaying(false)
+  }, [value, total])
+  return (
+    <div className="card replay">
+      <button
+        className="icon-btn replay-play"
+        onClick={() => {
+          if (value >= total) onChange(1)
+          setPlaying((p) => !p)
+        }}
+        aria-label={playing ? 'Pause replay' : 'Play replay'}
+      >
+        {playing ? <span className="pause-glyph" /> : <Icon name="play" size={16} />}
+      </button>
+      <div className="grow stack gap-4">
+        <div className="row between foot">
+          <b>Match replay</b>
+          <span className="tnum muted">{label}</span>
+        </div>
+        <input type="range" className="range" min={1} max={total} value={value} onChange={(e) => onChange(+e.target.value)} aria-label="Replay position" />
+      </div>
+      {value < total && (
+        <button className="chip" onClick={() => onChange(total)}>
+          Live state
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function Analytics({ ctx }: { ctx: MatchCtx }) {
-  const { innings, colorOf } = ctx
+  const all = ctx.balls
+  const [cut, setCut] = useState<number | null>(null)
+  const pos = cut ?? all.length
+  const onReplay = (v: number) =>
+    setCut((c) => {
+      const cur = c ?? all.length
+      if (v !== -1) return v >= all.length ? null : Math.max(1, v)
+      // advance to the end of the next over
+      const nextOverEnd = all.findIndex((b, i) => i >= cur && b.oDone && b.o > (all[cur - 1]?.o ?? 0))
+      const nxt = nextOverEnd >= 0 ? nextOverEnd + 1 : all.length
+      return nxt >= all.length ? null : nxt
+    })
+  const innings = useMemo(() => (cut == null ? ctx.innings : aggregate(all.slice(0, cut))), [cut, ctx.innings, all])
+  const wp = useMemo(() => winProbSeries(innings, ctx.trained), [innings, ctx.trained])
+  const colorOf = ctx.colorOf
+  const atBall = all[pos - 1]
   const [chart, setChart] = useState<Chart>('worm')
   const shown = innings.length > 2 ? innings : innings
   const colors = shown.map((i, k) => (innings.length > 2 && k >= 2 ? `color-mix(in srgb, ${colorOf(i.teamId)} 55%, var(--text-3))` : colorOf(i.teamId)))
@@ -274,6 +345,16 @@ export function Analytics({ ctx }: { ctx: MatchCtx }) {
   ] as const
   return (
     <div className="stack gap-24">
+      {all.length > 12 && (
+        <div className="replay-sticky">
+          <ReplayBar
+            total={all.length}
+            value={pos}
+            onChange={onReplay}
+            label={atBall ? `Inn ${atBall.inn} · ${atBall.ov} ov · ${atBall.team} ${atBall.runs}/${atBall.wkts} · ${ballLabel(atBall)}` : ''}
+          />
+        </div>
+      )}
       <Reveal>
         <StatGrid innings={innings} colorOf={colorOf} />
       </Reveal>
@@ -315,6 +396,20 @@ export function Analytics({ ctx }: { ctx: MatchCtx }) {
 
       <Reveal>
         <Momentum innings={innings} colorOf={colorOf} />
+      </Reveal>
+
+      <Reveal>
+        <ImpactTable ctx={ctx} innings={innings} wp={wp} />
+      </Reveal>
+
+      {limited && (
+        <Reveal>
+          <Simulator ctx={{ ...ctx, innings }} cutoff={cut == null ? undefined : innings[innings.length - 1]?.balls.length} />
+        </Reveal>
+      )}
+
+      <Reveal>
+        <PartnershipPressure ctx={ctx} innings={innings} />
       </Reveal>
 
       <Reveal>

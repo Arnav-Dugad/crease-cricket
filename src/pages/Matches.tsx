@@ -1,5 +1,7 @@
 import { motion } from 'motion/react'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarPicker, OnThisDay } from '../components/Archive'
+import { Sheet } from '../components/Sheet'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../components/Icon'
 import { MatchCard } from '../components/MatchCard'
@@ -23,13 +25,17 @@ const FORMATS = ['All formats', 'T20', 'ODI', 'Test']
 
 function DateStrip({ value, onChange }: { value: string; onChange: (d: string) => void }) {
   const today = new Date()
-  const days = useMemo(() => Array.from({ length: 29 }, (_, i) => addDays(today, i - 14)), [today.toDateString()])
+  // centre the strip on the selected day (so archive dates get a strip too)
+  const centre = Math.abs(+parseYmd(value) - +today) > 12 * 86400_000 ? parseYmd(value) : today
+  const days = useMemo(() => Array.from({ length: 29 }, (_, i) => addDays(centre, i - 14)), [centre.toDateString()])
   const ref = useRef<HTMLDivElement>(null)
+  const page = (dir: number) => ref.current?.scrollBy({ left: dir * ref.current.clientWidth * 0.8, behavior: 'smooth' })
   useEffect(() => {
     const el = ref.current?.querySelector('.day.on') as HTMLElement | null
     el?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
   }, [value])
   return (
+    <div className="rail-wrap">
     <div className="datestrip" ref={ref}>
       {days.map((d) => {
         const k = ymd(d)
@@ -44,6 +50,9 @@ function DateStrip({ value, onChange }: { value: string; onChange: (d: string) =
         )
       })}
     </div>
+    <button className="rail-arrow left" onClick={() => page(-1)} aria-label="Earlier dates"><Icon name="back" size={18} stroke={2.4} /></button>
+    <button className="rail-arrow right" onClick={() => page(1)} aria-label="Later dates"><Icon name="chevron" size={18} stroke={2.4} /></button>
+    </div>
   )
 }
 
@@ -53,6 +62,7 @@ export default function Matches() {
   const filter = (sp.get('f') as Filter) ?? 'all'
   const fmt = sp.get('fmt') ?? 'All formats'
   const isToday = date === ymd(new Date())
+  const [calOpen, setCalOpen] = useState(false)
   const day = useApi<unknown[]>(`/api/day/${date}`, { poll: isToday ? 30_000 : undefined })
   const set = (k: string, v: string | null) => {
     const n = new URLSearchParams(sp)
@@ -82,11 +92,23 @@ export default function Matches() {
           </div>
           <h1 className="large-title">{isToday ? 'Today’s matches' : d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</h1>
         </div>
-        {!isToday && (
-          <button className="chip" onClick={() => set('date', null)}>
-            <Icon name="calendar" size={15} /> Jump to today
+        <div className="row gap-8">
+          {!isToday && (
+            <button className="chip" onClick={() => set('date', null)}>
+              Today
+            </button>
+          )}
+          <button className="chip" onClick={() => setCalOpen(true)}>
+            <Icon name="history" size={15} /> Archive
           </button>
-        )}
+        </div>
+        <Sheet open={calOpen} onClose={() => setCalOpen(false)} label="Pick a date" width={420}>
+          <div style={{ padding: 20 }}>
+            <div className="title3" style={{ marginBottom: 4 }}>Match archive</div>
+            <div className="foot faint" style={{ marginBottom: 16 }}>Every match with a scorecard since 2005.</div>
+            <CalendarPicker value={date} onPick={(d) => { set('date', d === ymd(new Date()) ? null : d); setCalOpen(false) }} />
+          </div>
+        </Sheet>
       </div>
 
       <DateStrip value={date} onChange={(v) => set('date', v === ymd(new Date()) ? null : v)} />
@@ -137,6 +159,7 @@ export default function Matches() {
           ))}
         </div>
       )}
+      {parseYmd(date).getFullYear() > 2006 && <OnThisDay date={date} />}
     </motion.div>
   )
 }

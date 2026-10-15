@@ -77,7 +77,7 @@ export function Scorecard({ ctx }: { ctx: MatchCtx }) {
                   <motion.tr key={b.id} className={b.active ? 'hl' : ''} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.025 }}>
                     <td className="l" style={{ whiteSpace: 'normal', minWidth: 210 }}>
                       <Link to={`/player/${b.id}`} className="row gap-12">
-                        <Avatar src={b.headshot} name={b.name} size={36} />
+                        <Avatar src={b.headshot} id={b.id} name={b.name} size={36} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600 }}>
                             {b.name}
@@ -176,7 +176,7 @@ export function Scorecard({ ctx }: { ctx: MatchCtx }) {
                   <tr key={b.id} className={b.active ? 'hl' : ''}>
                     <td className="l" style={{ minWidth: 190 }}>
                       <Link to={`/player/${b.id}`} className="row gap-12">
-                        <Avatar src={b.headshot} name={b.name} size={36} />
+                        <Avatar src={b.headshot} id={b.id} name={b.name} size={36} />
                         <span style={{ fontWeight: 600 }}>
                           {b.name}
                           {b.active && <span style={{ color: 'var(--live)' }}> *</span>}

@@ -5,11 +5,16 @@ import type { MatchLite, TeamLite } from '../lib/types'
 import { TeamLogo } from './Media'
 import { StateBadge } from './UI'
 
+/** Name the clicked card's logos so they morph into the match hero (View Transitions API). */
+export function tagForTransition(el: HTMLElement) {
+  el.querySelectorAll<HTMLElement>('[data-vt]').forEach((n) => (n.style.viewTransitionName = n.dataset.vt!))
+}
+
 export function matchHref(m: MatchLite) {
   return `/match/${m.leagueId}/${m.id}`
 }
 
-function TeamScore({ t, m, size = 30 }: { t: TeamLite; m: MatchLite; size?: number }) {
+function TeamScore({ t, m, size = 30, vt }: { t: TeamLite; m: MatchLite; size?: number; vt?: string }) {
   const inns = t.innings
   const lost = m.state === 'post' && !t.winner && m.teams.some((x) => x.winner)
   const batting = m.state === 'in' && inns.some((i) => i.isCurrent && i.desc !== 'complete')
@@ -17,7 +22,9 @@ function TeamScore({ t, m, size = 30 }: { t: TeamLite; m: MatchLite; size?: numb
   const showOvers = last && m.format !== 'Test' && m.format !== 'First-class'
   return (
     <div className={`trow ${lost ? 'lost' : ''} ${batting ? 'batting' : ''}`}>
-      <TeamLogo src={t.logo} name={t.name} color={t.color} size={size} />
+      <span data-vt={vt} style={{ display: 'inline-flex', borderRadius: '50%' }}>
+        <TeamLogo src={t.logo} name={t.name} color={t.color} size={size} />
+      </span>
       <div className="tname">{t.name}</div>
       <div className="tscore">
         {inns.length > 1 && m.format !== 'T20' && m.format !== 'ODI' && (
@@ -35,7 +42,7 @@ function TeamScore({ t, m, size = 30 }: { t: TeamLite; m: MatchLite; size?: numb
 export function MatchCard({ m, showLeague = true }: { m: MatchLite; showLeague?: boolean }) {
   const winning = m.state === 'post' && m.teams.some((t) => t.winner)
   return (
-    <Link to={matchHref(m)} className="card interactive mcard" onMouseEnter={() => prefetch(`/api/match/${m.leagueId}/${m.id}`)}>
+    <Link to={matchHref(m)} viewTransition className="card interactive mcard" onClick={(e) => tagForTransition(e.currentTarget)} onMouseEnter={() => prefetch(`/api/match/${m.leagueId}/${m.id}`)}>
       <div className="top">
         <StateBadge m={m} />
         {m.format && <span className="badge fmt">{m.format}</span>}
@@ -44,8 +51,8 @@ export function MatchCard({ m, showLeague = true }: { m: MatchLite; showLeague?:
         </span>
       </div>
       <div className="stack gap-6">
-        <TeamScore t={m.teams[0]} m={m} />
-        <TeamScore t={m.teams[1]} m={m} />
+        <TeamScore t={m.teams[0]} m={m} vt="vt-logo-a" />
+        <TeamScore t={m.teams[1]} m={m} vt="vt-logo-b" />
       </div>
       <div className={`status ${m.state === 'in' ? 'live' : winning ? 'win' : ''}`}>
         {m.state === 'pre' ? (
@@ -66,7 +73,7 @@ export function MatchRow({ m }: { m: MatchLite }) {
   const [a, b] = m.teams
   const sc = (t: TeamLite) => t.innings.map((i) => `${i.runs}${i.wkts < 10 ? '/' + i.wkts : ''}`).join(' & ')
   return (
-    <Link to={matchHref(m)} className="lrow" onMouseEnter={() => prefetch(`/api/match/${m.leagueId}/${m.id}`)}>
+    <Link to={matchHref(m)} viewTransition className="lrow" onMouseEnter={() => prefetch(`/api/match/${m.leagueId}/${m.id}`)}>
       <div className="stack gap-8 grow">
         <div className="row gap-10">
           <TeamLogo src={a.logo} name={a.name} color={a.color} size={24} />

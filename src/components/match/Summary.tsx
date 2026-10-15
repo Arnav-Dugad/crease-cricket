@@ -7,7 +7,11 @@ import type { Ball, Video, WikiInfo } from '../../lib/types'
 import type { MatchCtx } from '../../pages/Match'
 import { Legend, WinProbChart } from '../charts/Charts'
 import { Icon } from '../Icon'
+import { biggestSwings } from '../../lib/impact'
 import { Avatar, TeamLogo } from '../Media'
+import { HeadToHead, VenueProfile, WeatherCard, WhereToWatch } from './Conditions'
+import { KeyMatchups, WhoBowlsNext } from './Matchups'
+import { MatchStory } from './Story'
 import { Reveal, SectionHead } from '../UI'
 import { VideoRail } from '../Video'
 
@@ -68,7 +72,7 @@ function KeyMoments({ ctx }: { ctx: MatchCtx }) {
         {list.map((mo, i) => {
           const st = MOMENT_STYLE[mo.kind]
           return (
-            <motion.div key={mo.ball.id + mo.kind} className="row gap-14" style={{ alignItems: 'flex-start', padding: '8px 0', gap: 14 }} initial={{ opacity: 0, x: -10 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.04 }}>
+            <motion.div key={mo.ball.id + mo.kind} className="row gap-14" style={{ alignItems: 'flex-start', padding: '8px 0', gap: 14 }} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 + i * 0.04 }}>
               <span style={{ width: 32, height: 32, borderRadius: 99, flex: 'none', display: 'grid', placeItems: 'center', background: st.color, color: 'white', boxShadow: '0 0 0 4px var(--bg-2)', zIndex: 1 }}>
                 <Icon name={st.icon} size={15} stroke={2.2} />
               </span>
@@ -98,7 +102,7 @@ function Performers({ ctx }: { ctx: MatchCtx }) {
         <Reveal key={`${l.id}-${l.stat}-${l.period}`} delay={i * 0.04}>
           <Link to={`/player/${l.id}`} className="card interactive stack gap-12" style={{ padding: 18, alignItems: 'flex-start', height: '100%' }}>
             <div className="row gap-12" style={{ width: '100%' }}>
-              <Avatar src={l.headshot} name={l.name} size={48} wiki />
+              <Avatar src={l.headshot} id={l.id} name={l.name} size={48} />
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="ellipsis" style={{ fontWeight: 600, fontSize: 15 }}>
                   {l.name}
@@ -127,7 +131,8 @@ export function Summary({ ctx }: { ctx: MatchCtx }) {
   const potm = m.potm
   const article = summary?.article
   const videos: Video[] = summary?.videos ?? []
-  const wp = useMemo(() => winProbSeries(innings.length ? innings : aggregate([])), [innings])
+  const wp = useMemo(() => winProbSeries(innings.length ? innings : aggregate([]), ctx.trained), [innings, ctx.trained])
+  const swings = useMemo(() => biggestSwings(innings, wp, 4), [innings, wp])
   const toss = noteOf(summary, 'toss')
   const firstBat = innings[0]?.teamId
   const order = firstBat && firstBat === m.teams[1].id ? [m.teams[1], m.teams[0]] : [m.teams[0], m.teams[1]]
@@ -143,11 +148,20 @@ export function Summary({ ctx }: { ctx: MatchCtx }) {
         </div>
       )}
 
+      {ctx.live && <WhoBowlsNext ctx={ctx} />}
+
+      {m.state !== 'post' && (
+        <div className="grid cols-2" style={{ alignItems: 'start' }}>
+          <HeadToHead ctx={ctx} />
+          <WeatherCard ctx={ctx} wiki={ctx.wiki} />
+        </div>
+      )}
+
       <div className="grid cols-2" style={{ alignItems: 'stretch' }}>
         {potm && (
           <Reveal>
             <Link to={`/player/${potm.id}`} className="card interactive row gap-16" style={{ padding: 20, height: '100%', overflow: 'hidden' }}>
-              <Avatar src={potm.headshot} name={potm.name} size={84} wiki />
+              <Avatar src={potm.headshot} id={potm.id} name={potm.name} size={84} />
               <div className="grow">
                 <div className="eyebrow" style={{ color: 'var(--orange)' }}>
                   ★ Player of the match
@@ -186,16 +200,25 @@ export function Summary({ ctx }: { ctx: MatchCtx }) {
             <div className="row between wrap gap-12" style={{ marginBottom: 14 }}>
               <div>
                 <div className="title3">Win probability</div>
-                <div className="foot faint">Crease model · resource-based estimate, updated every ball</div>
+                <div className="foot faint">
+                  {ctx.trained ? `Trained on Cricsheet ball-by-ball history (${ctx.trained.name})` : 'Resource-based estimate'} · updated every ball · biggest swings marked
+                </div>
               </div>
               <Legend items={[{ label: order[0].abbr, color: colorOf(order[0].id) }, { label: order[1].abbr, color: colorOf(order[1].id) }]} />
             </div>
-            <WinProbChart points={wp} teams={[order[0].abbr, order[1].abbr]} colors={[colorOf(order[0].id), colorOf(order[1].id)]} />
+            <WinProbChart points={wp} teams={[order[0].abbr, order[1].abbr]} colors={[colorOf(order[0].id), colorOf(order[1].id)]} swings={swings} />
           </div>
         </Reveal>
       )}
 
       <Performers ctx={ctx} />
+
+      <MatchStory ctx={ctx} />
+
+      <div className="grid cols-2" style={{ alignItems: 'start' }}>
+        <KeyMatchups ctx={ctx} />
+        {m.state === 'post' && <HeadToHead ctx={ctx} />}
+      </div>
 
       <div className="grid cols-2" style={{ alignItems: 'start' }}>
         <KeyMoments ctx={ctx} />
@@ -240,7 +263,7 @@ export function Squads({ ctx }: { ctx: MatchCtx }) {
           <div className="list">
             {s.players.map((p) => (
               <Link key={p.id} to={`/player/${p.id}`} className="lrow">
-                <Avatar src={p.headshot} name={p.name} size={40} />
+                <Avatar src={p.headshot} id={p.id} name={p.name} size={40} />
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="row gap-6">
                     <span className="ellipsis" style={{ fontWeight: 600, fontSize: 15 }}>
@@ -300,6 +323,11 @@ export function Info({ ctx, wiki }: { ctx: MatchCtx; wiki?: WikiInfo }) {
         </div>
       )}
       <div className="grid cols-2" style={{ alignItems: 'start' }}>
+        <WeatherCard ctx={ctx} wiki={wiki} />
+        <VenueProfile ctx={ctx} />
+      </div>
+      <WhereToWatch ctx={ctx} />
+      <div className="grid cols-2" style={{ alignItems: 'start' }}>
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="group-head">
             <div className="title3">Match details</div>
@@ -325,9 +353,13 @@ export function Info({ ctx, wiki }: { ctx: MatchCtx; wiki?: WikiInfo }) {
             <div className="list">
               {officials.map((o, i) => (
                 <div key={i} className="lrow">
-                  {o.flag?.href ? <img src={o.flag.href} alt={o.flag.alt} width={28} height={28} style={{ borderRadius: 99, objectFit: 'cover' }} /> : <span style={{ width: 28 }} />}
-                  <span className="grow" style={{ fontWeight: 600, fontSize: 15 }}>
-                    {o.displayName}
+                  <span style={{ position: 'relative', flex: 'none' }}>
+                    <Avatar id={String(o.links?.href ?? '').match(/player\/(\d+)/)?.[1] ?? null} src={null} name={o.displayName} size={40} />
+                    {o.flag?.href && <img src={o.flag.href} alt={o.flag.alt} width={18} height={18} className="flag-badge" />}
+                  </span>
+                  <span className="grow stack">
+                    <span style={{ fontWeight: 600, fontSize: 15 }}>{o.displayName}</span>
+                    <span className="cap faint">{o.flag?.alt}</span>
                   </span>
                   <span className="foot faint" style={{ textTransform: 'capitalize' }}>
                     {o.position?.displayName}

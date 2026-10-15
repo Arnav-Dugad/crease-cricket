@@ -26,7 +26,15 @@ async function direct(url: string) {
   return r.json()
 }
 
+// Served only by our own Worker (no upstream to fall back to).
+const OWN = /^\/(api\/(ai|hist|live|log|health)\b|data\/)/
+
 async function load(path: string): Promise<unknown> {
+  if (OWN.test(path)) {
+    const r = await fetch(path)
+    if (!r.ok) throw new Error(`Request failed (${r.status})`)
+    return r.json()
+  }
   const kind = kindOf(path)
   if ((directUntil.get(kind) ?? 0) > Date.now()) return (await resolve(path, direct)).data
   try {

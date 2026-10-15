@@ -10,9 +10,11 @@
     "build": "tsc -b && vite build",
     "preview": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "data:build": "node scripts/cricsheet/build.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.134.0",
     "motion": "^14.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -23,8 +25,10 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "sharp": "^0.35.5",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "wrangler": "^4.151.0"
+    "wrangler": "^4.151.0",
+    "yauzl": "^3.4.0"
   }
 }

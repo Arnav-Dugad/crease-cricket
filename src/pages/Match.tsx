@@ -1,18 +1,25 @@
-import { AnimatePresence, motion } from 'motion/react'
-import { useMemo } from 'react'
+import { AnimatePresence, motion, useMotionValue, useScroll, useSpring, useTransform } from 'motion/react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Celebration, type Moment } from '../components/Celebration'
 import { distinctPair } from '../components/charts/Charts'
+import { FollowTeamButton } from '../components/Follow'
 import { Icon } from '../components/Icon'
-import { Avatar, TeamLogo, useWiki } from '../components/Media'
 import { Analytics } from '../components/match/Analytics'
 import { Commentary } from '../components/match/Commentary'
 import { Scorecard } from '../components/match/Scorecard'
 import { Info, Squads, Summary } from '../components/match/Summary'
+import { Avatar, TeamLogo, useWiki } from '../components/Media'
+import { Odometer } from '../components/Odometer'
 import { ErrorState, Segmented, Skel, StateBadge, pageMotion } from '../components/UI'
 import { useApi } from '../lib/api'
-import { aggregate, ballKind, ballLabel, chaseWinProb, firstInningsWinProb, isLegal, projectedScore, type InningsAgg } from '../lib/analytics'
-import { countdown, shortLeague, startLabel, toMatch } from '../lib/normalize'
-import type { Ball, BallsResponse, MatchLite, TeamLite } from '../lib/types'
+import { aggregate, ballKind, ballLabel, isLegal, projectedScore, winProbSeries, type InningsAgg } from '../lib/analytics'
+import { useImageTint } from '../lib/color'
+import { histFormat, modelFor, trainedWinModel, useHistVenue, useModel, venueFormatKey, type TrainedWinModel } from '../lib/hist'
+import { lockScreenActive, lockScreenSupported, startLockScreen, stopLockScreen, updateLockScreen, useLiveChannel } from '../lib/live'
+import { countdown, espnImg, shortLeague, startLabel, toMatch } from '../lib/normalize'
+import { prefersReducedMotion } from '../lib/prefs'
+import type { Ball, BallsResponse, MatchLite, TeamLite, WikiInfo } from '../lib/types'
 import { venueQuery } from './Home'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -27,6 +34,8 @@ export interface MatchCtx {
   innings: InningsAgg[]
   colorOf: (teamIdOrAbbr: string) => string
   live: boolean
+  trained: TrainedWinModel | null
+  wiki?: WikiInfo
 }
 
 type Tab = 'summary' | 'scorecard' | 'commentary' | 'analytics' | 'squads' | 'info'
@@ -35,32 +44,43 @@ function leagueNameOf(h: any): string {
   return h?.league?.name ?? h?.description?.match(/,\s*(.+?)\s+at\s+/)?.[1] ?? ''
 }
 
-function HeroTeam({ t, m, align }: { t: TeamLite; m: MatchLite; align: 'left' | 'right' }) {
+const utcYmd = (iso: string) => iso.slice(0, 10).replace(/-/g, '')
+
+function HeroTeam({ t, m, align, vt }: { t: TeamLite; m: MatchLite; align: 'left' | 'right'; vt: string }) {
   const lost = m.state === 'post' && !t.winner && m.teams.some((x) => x.winner)
   const batting = m.state === 'in' && t.innings.some((i) => i.isCurrent && i.desc !== 'complete')
+  const last = t.innings[t.innings.length - 1]
   return (
     <div className="stack gap-10" style={{ alignItems: align === 'left' ? 'flex-start' : 'flex-end', textAlign: align, flex: 1, minWidth: 0, opacity: lost ? 0.62 : 1 }}>
-      <TeamLogo src={t.logo} name={t.name} color={t.color} size={72} />
+      <div className="row gap-8" style={{ flexDirection: align === 'left' ? 'row' : 'row-reverse' }}>
+        <Link to={`/team/${t.id}/${encodeURIComponent(t.name)}`} style={{ viewTransitionName: vt, borderRadius: '50%', display: 'inline-flex' } as CSSProperties} viewTransition>
+          <TeamLogo src={t.logo} name={t.name} color={t.color} size={72} />
+        </Link>
+        {t.name !== 'TBC' && <FollowTeamButton team={{ id: t.id, name: t.name, logo: t.logo, color: t.color }} compact onDark />}
+      </div>
       <div style={{ fontWeight: 600, fontSize: 'clamp(15px, 2.2vw, 22px)', lineHeight: 1.15, maxWidth: '100%' }}>
         {t.name} {t.winner && <span title="Winner">🏆</span>}
       </div>
       <div className="tnum" style={{ fontSize: 'clamp(30px, 6vw, 56px)', fontWeight: 700, letterSpacing: '-0.045em', lineHeight: 1 }}>
         {t.innings.length ? (
-          t.innings.map((i, k) => (
-            <span key={k} style={{ opacity: k < t.innings.length - 1 ? 0.55 : 1, fontSize: k < t.innings.length - 1 ? '0.6em' : undefined }}>
-              {k > 0 && <span style={{ opacity: 0.5, fontSize: '0.6em' }}> & </span>}
-              {i.runs}
-              {i.wkts < 10 ? `/${i.wkts}` : ''}
-            </span>
-          ))
+          <>
+            {t.innings.slice(0, -1).map((i, k) => (
+              <span key={k} style={{ opacity: 0.55, fontSize: '0.6em' }}>
+                {i.runs}
+                {i.wkts < 10 ? `/${i.wkts}` : ''}
+                <span style={{ opacity: 0.6 }}> & </span>
+              </span>
+            ))}
+            <Odometer value={`${last.runs}${last.wkts < 10 ? '/' + last.wkts : ''}`} />
+          </>
         ) : (
-          <span style={{ opacity: 0.4 }}>—</span>
+          <span style={{ opacity: 0.4 }}>{m.state === 'pre' ? '' : '—'}</span>
         )}
       </div>
-      {t.innings.length > 0 && (
-        <div className="foot" style={{ opacity: 0.75 }}>
+      {last && (
+        <div className="foot" style={{ opacity: 0.8 }}>
           {batting && <span className="live-dot" style={{ display: 'inline-block', marginRight: 8 }} />}
-          {t.innings[t.innings.length - 1].overs} ov{t.innings[t.innings.length - 1].target ? ` · target ${t.innings[t.innings.length - 1].target}` : ''}
+          {last.overs} ov{last.target ? ` · target ${last.target}` : ''}
         </div>
       )}
     </div>
@@ -68,7 +88,7 @@ function HeroTeam({ t, m, align }: { t: TeamLite; m: MatchLite; align: 'left' | 
 }
 
 /** Live situation panel: batters, bowler, this over, required rate, projection & win probability. */
-function LivePanel({ ctx }: { ctx: MatchCtx }) {
+function LivePanel({ ctx, wpNow }: { ctx: MatchCtx; wpNow: number | null }) {
   const { innings, balls, m, colorOf } = ctx
   const last = balls[balls.length - 1]
   const inn = innings[innings.length - 1]
@@ -82,8 +102,8 @@ function LivePanel({ ctx }: { ctx: MatchCtx }) {
   const need = chasing ? last.target - inn.total : 0
   const rrr = chasing && left > 0 ? (need / left) * 6 : 0
   const limited = limit > 0 && limit <= 300 && innings.length <= 2
-  let pBat: number | null = null
-  if (limited) pBat = chasing ? chaseWinProb(need, left, 10 - inn.wkts, limit) : innings.length === 1 ? firstInningsWinProb(inn.total, left, 10 - inn.wkts, limit) : null
+  // wpNow = P(team batting first wins)
+  const pBat = wpNow == null || !limited ? null : inn.inn === 1 ? wpNow : 1 - wpNow
   const batTeam = m.teams.find((t) => t.id === inn.teamId) ?? m.teams[0]
   const bowlTeam = m.teams.find((t) => t.id !== batTeam.id) ?? m.teams[1]
   const [ca, cb] = [colorOf(batTeam.id), colorOf(bowlTeam.id)]
@@ -96,13 +116,13 @@ function LivePanel({ ctx }: { ctx: MatchCtx }) {
           </div>
           {[last.bat, last.nsb].filter(Boolean).map((b, i) => (
             <Link key={b!.id} to={`/player/${b!.id}`} className="row gap-10">
-              <Avatar src={`https://a.espncdn.com/i/headshots/cricket/players/full/${b!.id}.png`} name={b!.n} size={34} />
+              <Avatar id={b!.id} name={b!.n} size={34} />
               <span className="grow ellipsis" style={{ fontWeight: i === 0 ? 700 : 500 }}>
                 {b!.n}
                 {i === 0 ? ' *' : ''}
               </span>
               <span className="tnum" style={{ fontWeight: 700 }}>
-                {b!.r}
+                <Odometer value={String(b!.r)} />
                 <span style={{ opacity: 0.6, fontWeight: 400 }}> ({b!.b})</span>
               </span>
             </Link>
@@ -114,7 +134,7 @@ function LivePanel({ ctx }: { ctx: MatchCtx }) {
           </div>
           {last.bowl && (
             <Link to={`/player/${last.bowl.id}`} className="row gap-10">
-              <Avatar src={`https://a.espncdn.com/i/headshots/cricket/players/full/${last.bowl.id}.png`} name={last.bowl.n} size={34} />
+              <Avatar id={last.bowl.id} name={last.bowl.n} size={34} />
               <span className="grow ellipsis" style={{ fontWeight: 600 }}>
                 {last.bowl.n}
               </span>
@@ -173,7 +193,7 @@ function LivePanel({ ctx }: { ctx: MatchCtx }) {
             <span>
               {batTeam.abbr} {Math.round(pBat * 100)}%
             </span>
-            <span style={{ opacity: 0.6, fontWeight: 500 }}>Win probability · model</span>
+            <span style={{ opacity: 0.6, fontWeight: 500 }}>Win probability · {ctx.trained ? 'trained model' : 'model'}</span>
             <span>
               {Math.round((1 - pBat) * 100)}% {bowlTeam.abbr}
             </span>
@@ -188,31 +208,142 @@ function LivePanel({ ctx }: { ctx: MatchCtx }) {
   )
 }
 
+/** Detect celebration-worthy deliveries that arrived since the last update. */
+function useCelebrations(balls: Ball[], enabled: boolean): Moment | null {
+  const seen = useRef<string | null>(null)
+  const [moment, setMoment] = useState<Moment | null>(null)
+  useEffect(() => {
+    const last = balls[balls.length - 1]
+    if (!last) return
+    const prev = seen.current
+    seen.current = last.id
+    if (!enabled || !prev || prev === last.id) return
+    const idx = balls.findIndex((b) => b.id === prev)
+    const fresh = idx >= 0 ? balls.slice(idx + 1) : []
+    if (!fresh.length) return
+    let best: Moment | null = null
+    const rank = { hundred: 5, wicket: 4, fifty: 3, six: 2, four: 1 }
+    for (const b of fresh) {
+      let m: Moment | null = null
+      if (b.w) m = { kind: 'wicket', key: b.id, title: b.wtext?.split(/\s+(?=c |b |lbw|st |run out)/)[0] || b.bat?.n || 'Wicket', sub: b.wtext || b.short }
+      else if (b.bat && b.bat.r >= 100 && b.bat.r - b.r < 100) m = { kind: 'hundred', key: b.id, title: `${b.bat.n} — hundred!`, sub: `${b.bat.r} off ${b.bat.b}` }
+      else if (b.bat && b.bat.r >= 50 && b.bat.r - b.r < 50) m = { kind: 'fifty', key: b.id, title: `${b.bat.n} — fifty`, sub: `${b.bat.r} off ${b.bat.b}` }
+      else if (ballKind(b) === 'six') m = { kind: 'six', key: b.id, title: b.bat?.n ?? 'Six!', sub: b.short }
+      else if (ballKind(b) === 'four') m = { kind: 'four', key: b.id, title: b.bat?.n ?? 'Four!', sub: b.short }
+      if (m && (!best || rank[m.kind] >= rank[best.kind])) best = m
+    }
+    if (best) setMoment(best)
+  }, [balls, enabled])
+  return moment
+}
+
+function LockScreenButton({ ctx }: { ctx: MatchCtx }) {
+  const [on, setOn] = useState(lockScreenActive())
+  const last = ctx.balls[ctx.balls.length - 1]
+  const inn = ctx.innings[ctx.innings.length - 1]
+  useEffect(() => {
+    if (!on || !inn) return
+    const bat = ctx.m.teams.find((t) => t.id === inn.teamId)
+    const need = last?.target ? last.target - inn.total : 0
+    updateLockScreen(
+      `${bat?.abbr ?? inn.team} ${inn.total}/${inn.wkts} (${Math.floor(inn.legal / 6)}.${inn.legal % 6})`,
+      need > 0 ? `Need ${need} off ${last?.rem ?? '?'}` : last?.short ?? ctx.m.status,
+      ctx.m.title,
+      bat?.logo ? espnImg(bat.logo, 256) : null,
+    )
+  }, [on, inn, last, ctx.m])
+  useEffect(() => () => stopLockScreen(), [])
+  if (!lockScreenSupported()) return null
+  return (
+    <button
+      className={`hero-pill ${on ? 'on' : ''}`}
+      onClick={async () => {
+        if (on) {
+          stopLockScreen()
+          setOn(false)
+        } else setOn(await startLockScreen())
+      }}
+      title="Show the live score on your lock screen (uses media controls)"
+    >
+      <Icon name="lock" size={14} /> {on ? 'On lock screen' : 'Lock screen'}
+    </button>
+  )
+}
+
 export default function Match() {
   const { league = '', event = '' } = useParams()
   const [sp, setSp] = useSearchParams()
-  const summary = useApi<any>(`/api/match/${league}/${event}`, { poll: 20_000 })
-  const h = summary.data?.header
+  const reduced = prefersReducedMotion()
+
+  // First load without a version key; once we know the match is live, a WebSocket tick id
+  // becomes part of the URL so every viewer pulls the same fresh, edge-cached payload.
+  const first = useApi<any>(`/api/match/${league}/${event}`, { poll: 60_000 })
+  const isLive = first.data?.header?.competitions?.[0]?.status?.type?.state === 'in'
+  const matchDate = first.data?.header?.competitions?.[0]?.date as string | undefined
+  const channel = useLiveChannel(league, event, matchDate ? utcYmd(matchDate) : null, isLive)
+  const v = channel.state === 'live' && channel.tick ? `?v=${channel.tick}` : ''
+  const fallbackPoll = isLive && channel.state !== 'live' ? 20_000 : undefined
+  const summary = useApi<any>(`/api/match/${league}/${event}${v}`, { poll: fallbackPoll })
+  const data = summary.data ?? first.data
+  const h = data?.header
   const m = useMemo(() => {
     if (!h) return null
     const x = toMatch(h, { id: league, name: leagueNameOf(h) })
-    const v = summary.data?.gameInfo?.venue
-    if (!x.venue && v) {
-      x.venue = v.fullName ?? ''
-      x.city = v.address?.city ?? ''
+    const venue = data?.gameInfo?.venue
+    if (!x.venue && venue) {
+      x.venue = venue.fullName ?? ''
+      x.city = venue.address?.city ?? ''
     }
     return x
-  }, [h, league, summary.data])
+  }, [h, league, data])
   const live = m?.state === 'in'
-  const balls = useApi<BallsResponse>(m && m.state !== 'pre' ? `/api/balls/${league}/${event}${live ? '?live=1' : ''}` : null, { poll: live ? 20_000 : undefined, staleMs: live ? 15_000 : 3600_000 })
+  const balls = useApi<BallsResponse>(m && m.state !== 'pre' ? `/api/balls/${league}/${event}${live ? (v ? `${v}&live=1` : '?live=1') : ''}` : null, {
+    poll: live ? fallbackPoll : undefined,
+    staleMs: live ? 15_000 : 3600_000,
+  })
   const innings = useMemo(() => aggregate(balls.data?.balls ?? []), [balls.data])
   const wiki = useWiki(m ? venueQuery(m) : null)
+
+  // trained win-probability model, calibrated with the venue's own par score
+  const model = useModel()
+  const limit = innings[0]?.limit ?? 0
+  const venueHist = useHistVenue(m?.venue || null, m?.city)
+  const trained = useMemo(() => {
+    if (!m) return null
+    const fm = modelFor(model.data, limit, m.women)
+    const vb = venueHist.data?.formats?.[venueFormatKey(histFormat(m.format, limit), m.women)]
+    return trainedWinModel(fm, vb?.parByOver, vb?.parN)
+  }, [model.data, limit, m, venueHist.data])
+  const wpNow = useMemo(() => {
+    const s = winProbSeries(innings, trained)
+    return s.length > 1 ? s[s.length - 1].p : null
+  }, [innings, trained])
 
   const colorOf = useMemo(() => {
     if (!m) return () => '#0A84FF'
     const [c1, c2] = distinctPair(m.teams[0].color, m.teams[1].color)
     return (k: string) => (k === m.teams[0].id || k === m.teams[0].abbr ? c1 : k === m.teams[1].id || k === m.teams[1].abbr ? c2 : '#8E8E93')
   }, [m])
+
+  const moment = useCelebrations(balls.data?.balls ?? [], !!live)
+  const img = wiki.data?.image
+  const tint = useImageTint(img)
+
+  // parallax + tilt on the hero
+  const heroRef = useRef<HTMLDivElement>(null)
+  const { scrollY } = useScroll()
+  const bgY = useTransform(scrollY, [0, 600], [0, reduced ? 0 : 120])
+  const rx = useMotionValue(0)
+  const ry = useMotionValue(0)
+  const srx = useSpring(rx, { stiffness: 120, damping: 18 })
+  const sry = useSpring(ry, { stiffness: 120, damping: 18 })
+  const onTilt = (e: React.PointerEvent) => {
+    if (reduced || e.pointerType !== 'mouse') return
+    const r = heroRef.current?.getBoundingClientRect()
+    if (!r) return
+    ry.set(((e.clientX - r.left) / r.width - 0.5) * 3)
+    rx.set(-((e.clientY - r.top) / r.height - 0.5) * 3)
+  }
 
   const hasBalls = innings.length > 0
   const tabs: { value: Tab; label: string }[] = [
@@ -226,30 +357,32 @@ export default function Match() {
   const tabParam = sp.get('tab') as Tab | null
   const tab: Tab = tabs.some((t) => t.value === tabParam) ? tabParam! : 'summary'
 
-  if (summary.error && !summary.data)
+  if (first.error && !data)
     return (
       <div className="page">
-        <ErrorState onRetry={summary.refresh} text="This match couldn’t be loaded." />
+        <ErrorState onRetry={first.refresh} text="This match couldn’t be loaded." />
       </div>
     )
 
   const ctx: MatchCtx | null = m
-    ? { league, event, summary: summary.data, m, balls: balls.data?.balls ?? [], ballsPartial: !!balls.data?.partial, innings, colorOf, live: !!live }
+    ? { league, event, summary: data, m, balls: balls.data?.balls ?? [], ballsPartial: !!balls.data?.partial, innings, colorOf, live: !!live, trained, wiki: wiki.data }
     : null
-  const img = wiki.data?.image
+  const accents = m ? ({ '--team-a': colorOf(m.teams[0].id), '--team-b': colorOf(m.teams[1].id), '--tint': tint ?? 'transparent' } as CSSProperties) : undefined
   const legalBalls = innings[innings.length - 1]?.balls.filter(isLegal).length ?? 0
 
   return (
-    <motion.div className="page" {...pageMotion}>
-      <div className="hero-card" style={{ minHeight: 0, borderRadius: 'var(--r-xl)' }}>
-        <div className="bg-img">
+    <motion.div className="page match-page" style={accents} {...pageMotion}>
+      <Celebration moment={moment} />
+      <motion.div ref={heroRef} className="hero-card match-hero" style={{ minHeight: 0, borderRadius: 'var(--r-xl)', rotateX: srx, rotateY: sry, transformPerspective: 1200 }} onPointerMove={onTilt} onPointerLeave={() => (rx.set(0), ry.set(0))}>
+        <motion.div className="bg-img" style={{ y: bgY, bottom: -120 }}>
           {img ? (
-            <motion.img src={img} alt={m?.venue} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1 }} style={{ filter: 'saturate(1.1)' }} />
+            <motion.img src={img} alt={m?.venue} fetchPriority="high" initial={{ opacity: 0, scale: 1.12 }} animate={{ opacity: 1, scale: 1.06 }} transition={{ duration: 1.2 }} style={{ filter: 'saturate(1.1)' }} />
           ) : (
             <div style={{ width: '100%', height: '100%', background: m ? `radial-gradient(120% 90% at 0% 0%, ${m.teams[0].color} 0%, transparent 55%), radial-gradient(120% 90% at 100% 100%, ${m.teams[1].color} 0%, transparent 55%), #0b0b0f` : '#111' }} />
           )}
-        </div>
+        </motion.div>
         <div className="bg-shade" style={{ background: 'linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.55) 40%, rgba(0,0,0,.85))' }} />
+        <div className="team-glow" />
         <div style={{ padding: 'clamp(16px, 3vw, 28px)' }}>
           <div className="row gap-8 wrap" style={{ marginBottom: 'clamp(18px, 4vw, 40px)' }}>
             {m ? (
@@ -260,12 +393,19 @@ export default function Match() {
                     {m.format}
                   </span>
                 )}
-                <Link to={`/series/${league}`} className="foot row gap-4" style={{ fontWeight: 600, opacity: 0.9 }}>
+                <Link to={`/series/${league}`} className="foot row gap-4" style={{ fontWeight: 600, opacity: 0.9 }} viewTransition>
                   {shortLeague(m.leagueName)} <Icon name="chevron" size={12} stroke={2.4} />
                 </Link>
                 <span className="foot" style={{ opacity: 0.65 }}>
                   {m.desc.split(',')[0]}
                 </span>
+                <span style={{ flex: 1 }} />
+                {live && channel.state === 'live' && (
+                  <span className="hero-pill" title="Real-time updates over a live connection">
+                    <span className="live-dot" /> Real-time
+                  </span>
+                )}
+                {live && <LockScreenButton ctx={ctx!} />}
               </>
             ) : (
               <Skel w={240} h={22} style={{ opacity: 0.4 }} />
@@ -273,11 +413,24 @@ export default function Match() {
           </div>
           {m ? (
             <div className="row gap-16" style={{ alignItems: 'flex-end' }}>
-              <HeroTeam t={m.teams[0]} m={m} align="left" />
-              <div className="foot" style={{ opacity: 0.5, fontWeight: 700, paddingBottom: 30 }}>
-                VS
+              <HeroTeam t={m.teams[0]} m={m} align="left" vt="vt-logo-a" />
+              <div style={{ textAlign: 'center', paddingBottom: 30, flex: 'none' }}>
+                {m.state === 'pre' ? (
+                  <>
+                    <div className="tnum" style={{ fontSize: 'clamp(22px, 4vw, 34px)', fontWeight: 700, letterSpacing: '-0.03em' }}>
+                      {new Date(m.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                    <div className="foot" style={{ opacity: 0.7 }}>
+                      {new Date(m.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </div>
+                  </>
+                ) : (
+                  <span className="foot" style={{ opacity: 0.5, fontWeight: 700 }}>
+                    VS
+                  </span>
+                )}
               </div>
-              <HeroTeam t={m.teams[1]} m={m} align="right" />
+              <HeroTeam t={m.teams[1]} m={m} align="right" vt="vt-logo-b" />
             </div>
           ) : (
             <Skel h={180} style={{ opacity: 0.3 }} />
@@ -292,19 +445,19 @@ export default function Match() {
               </div>
             </div>
           )}
-          {ctx && live && hasBalls && legalBalls >= 0 && <LivePanel ctx={ctx} />}
+          {ctx && live && hasBalls && legalBalls >= 0 && <LivePanel ctx={ctx} wpNow={wpNow} />}
         </div>
-      </div>
+      </motion.div>
 
       <div className="sticky-tabs">
         <Segmented
           value={tab}
           options={tabs}
           layout="match-tab"
-          onChange={(v) => {
+          onChange={(nv) => {
             const n = new URLSearchParams(sp)
-            if (v === 'summary') n.delete('tab')
-            else n.set('tab', v)
+            if (nv === 'summary') n.delete('tab')
+            else n.set('tab', nv)
             setSp(n, { replace: true })
           }}
         />

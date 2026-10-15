@@ -2,9 +2,12 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon } from '../components/Icon'
-import { matchHref, MatchCard } from '../components/MatchCard'
+import { matchHref, MatchCard, tagForTransition } from '../components/MatchCard'
 import { LeagueLogo, TeamLogo, useWiki } from '../components/Media'
 import { NewsCard } from '../components/NewsCard'
+import { Rail } from '../components/Rail'
+import { Avatar } from '../components/Media'
+import { useFollows } from '../lib/prefs'
 import { CardSkeleton, Reveal, SectionHead, Skel, StateBadge, pageMotion } from '../components/UI'
 import { addDays, useApi, ymd } from '../lib/api'
 import { countdown, groupsFromScorepanel, matchPriority, shortLeague } from '../lib/normalize'
@@ -18,7 +21,9 @@ function HeroTeam({ t, m, align }: { t: TeamLite; m: MatchLite; align: 'left' | 
   const lost = m.state === 'post' && !t.winner && m.teams.some((x) => x.winner)
   return (
     <div className="stack gap-12" style={{ alignItems: align === 'left' ? 'flex-start' : 'flex-end', textAlign: align, minWidth: 0, flex: 1, opacity: lost ? 0.6 : 1 }}>
-      <TeamLogo src={t.logo} name={t.name} color={t.color} size={64} />
+      <span data-vt={align === 'left' ? 'vt-logo-a' : 'vt-logo-b'} style={{ display: 'inline-flex', borderRadius: '50%' }}>
+        <TeamLogo src={t.logo} name={t.name} color={t.color} size={64} />
+      </span>
       <div style={{ fontWeight: 600, fontSize: 'clamp(15px, 2vw, 19px)', lineHeight: 1.2, maxWidth: '100%' }} className="ellipsis">
         {t.name}
       </div>
@@ -37,7 +42,7 @@ function HeroCard({ m }: { m: MatchLite }) {
   const img = wiki.data?.image
   const [a, b] = m.teams
   return (
-    <Link to={matchHref(m)} className="hero-card" style={{ display: 'flex', flexDirection: 'column', scrollSnapAlign: 'center' }}>
+    <Link to={matchHref(m)} viewTransition onClick={(e) => tagForTransition(e.currentTarget)} className="hero-card" style={{ display: 'flex', flexDirection: 'column', scrollSnapAlign: 'center' }}>
       <div className="bg-img">
         {img ? (
           <motion.img src={img} alt={m.venue} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} />
@@ -117,12 +122,22 @@ function HeroCarousel({ matches }: { matches: MatchLite[] }) {
     child && el.scrollTo({ left: child.offsetLeft - el.offsetLeft - (el.clientWidth - child.clientWidth) / 2, behavior: 'smooth' })
   }
   return (
-    <div style={{ position: 'relative' }}>
+    <div className="rail-wrap" style={{ position: 'relative' }}>
       <div ref={ref} className="hero-rail" style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'min(92%, 1100px)', gap: 16, overflowX: 'auto', scrollSnapType: 'x mandatory', scrollbarWidth: 'none', padding: '6px 4%', margin: '0 -4%' }}>
         {matches.map((m) => (
           <HeroCard key={m.id} m={m} />
         ))}
       </div>
+      {matches.length > 1 && (
+        <>
+          <button className={`rail-arrow left hero-arrow ${idx === 0 ? 'hidden' : ''}`} onClick={() => go(Math.max(0, idx - 1))} aria-label="Previous match">
+            <Icon name="back" size={20} stroke={2.4} />
+          </button>
+          <button className={`rail-arrow right hero-arrow ${idx >= matches.length - 1 ? 'hidden' : ''}`} onClick={() => go(Math.min(matches.length - 1, idx + 1))} aria-label="Next match">
+            <Icon name="chevron" size={20} stroke={2.4} />
+          </button>
+        </>
+      )}
       {matches.length > 1 && (
         <div className="row center gap-8" style={{ marginTop: 18 }}>
           {matches.map((m, i) => (
@@ -173,6 +188,18 @@ export default function Home() {
     return [...groupsToday, ...groupsTmr, ...groupsLater].flatMap((g) => g.matches.filter((m) => m.state === 'pre' && m.teams[0].name !== 'TBC' && !ids.has(m.id)).map((m) => ({ m, t: g.tier }))).sort((a, b) => a.t - b.t || +new Date(a.m.date) - +new Date(b.m.date)).slice(0, 12).map((x) => x.m)
   }, [groupsToday, groupsTmr, groupsLater, live])
 
+  const follows = useFollows()
+  const forYou = useMemo(() => {
+    const ids = new Set(follows.teams.map((t) => t.id))
+    if (!ids.size) return []
+    const seen = new Set<string>()
+    return [...groupsYest, ...groupsToday, ...groupsTmr, ...groupsLater]
+      .flatMap((g) => g.matches)
+      .filter((m) => m.teams.some((t) => ids.has(t.id)) && !seen.has(m.id) && seen.add(m.id))
+      .sort((a, b) => (a.state === 'in' ? -1 : b.state === 'in' ? 1 : Math.abs(+new Date(a.date) - Date.now()) - Math.abs(+new Date(b.date) - Date.now())))
+      .slice(0, 12)
+  }, [follows.teams, groupsYest, groupsToday, groupsTmr, groupsLater])
+
   const loading = dToday.loading && dYest.loading
   const liveCount = live.length
 
@@ -210,14 +237,45 @@ export default function Home() {
         </Reveal>
       ) : null}
 
+      {(follows.teams.length > 0 || follows.players.length > 0) && (
+        <section className="section">
+          <SectionHead title="For you." sub="Teams and players you follow." />
+          {follows.players.length > 0 && (
+            <div className="scroll-x" style={{ marginBottom: 16 }}>
+              {follows.players.map((p) => (
+                <Link key={p.id} to={`/player/${p.id}`} className="chip" style={{ height: 40, paddingLeft: 6 }} viewTransition>
+                  <Avatar id={p.id} name={p.name} size={28} />
+                  {p.name}
+                </Link>
+              ))}
+              {follows.teams.map((t) => (
+                <Link key={t.id} to={`/team/${t.id}/${encodeURIComponent(t.name)}`} className="chip" style={{ height: 40, paddingLeft: 6 }} viewTransition>
+                  <TeamLogo src={t.logo} name={t.name} color={t.color} size={28} />
+                  {t.name}
+                </Link>
+              ))}
+            </div>
+          )}
+          {forYou.length > 0 ? (
+            <Rail label="Matches for you">
+              {forYou.map((m) => (
+                <MatchCard key={m.id} m={m} />
+              ))}
+            </Rail>
+          ) : (
+            follows.teams.length > 0 && <div className="foot faint">No matches for your teams in the next few days.</div>
+          )}
+        </section>
+      )}
+
       {live.length > 0 && (
         <section className="section">
           <SectionHead title="Live now." sub="Ball by ball, as it happens." to="/matches" />
-          <div className="rail">
+          <Rail label="Live matches">
             {live.map((m) => (
               <MatchCard key={m.id} m={m} />
             ))}
-          </div>
+          </Rail>
         </section>
       )}
 
@@ -279,22 +337,22 @@ export default function Home() {
       {results.length > 0 && (
         <section className="section">
           <SectionHead title="Results." sub="How it finished." to="/matches" />
-          <div className="rail">
+          <Rail label="Results">
             {results.map((m) => (
               <MatchCard key={m.id} m={m} />
             ))}
-          </div>
+          </Rail>
         </section>
       )}
 
       {upcoming.length > 0 && (
         <section className="section">
           <SectionHead title="Coming up." sub="Set your alarms." to="/matches" />
-          <div className="rail">
+          <Rail label="Upcoming">
             {upcoming.map((m) => (
               <MatchCard key={m.id} m={m} />
             ))}
-          </div>
+          </Rail>
         </section>
       )}
     </motion.div>

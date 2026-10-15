@@ -6,6 +6,7 @@
     <title>Crease — Live Cricket</title>
     <meta name="description" content="Live cricket scores, ball-by-ball commentary, scorecards and deep match analytics — beautifully designed." />
     <meta name="theme-color" content="#f5f5f7" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Crease" />
@@ -13,7 +14,7 @@
     <meta property="og:description" content="Live scores, commentary and analytics for every match." />
     <meta property="og:type" content="website" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="preconnect" href="https://a.espncdn.com" crossorigin />
     <link rel="preconnect" href="https://upload.wikimedia.org" crossorigin />
@@ -22,8 +23,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <script>
       try {
-        var t = localStorage.getItem('crease-theme')
+        var p = JSON.parse(localStorage.getItem('crease-prefs') || '{}')
+        var t = p.theme || localStorage.getItem('crease-theme')
         if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t)
+        if (p.contrast === 'high') document.documentElement.setAttribute('data-contrast', '')
       } catch (e) {}
     </script>
   </head>

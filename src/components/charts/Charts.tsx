@@ -243,7 +243,13 @@ export function RunRateChart({ innings, colors }: { innings: InningsAgg[]; color
 
 /* ---------- Win probability ---------- */
 
-export function WinProbChart({ points, teams, colors }: { points: WinPoint[]; teams: [string, string]; colors: [string, string] }) {
+export interface WinSwing {
+  i: number
+  delta: number
+  label: string
+}
+
+export function WinProbChart({ points, teams, colors, swings = [] }: { points: WinPoint[]; teams: [string, string]; colors: [string, string]; swings?: WinSwing[] }) {
   const W = 680, H = 220, P = { l: 40, r: 12, t: 12, b: 26 }
   const h = useHover()
   const n = Math.max(points.length - 1, 1)
@@ -294,6 +300,33 @@ export function WinProbChart({ points, teams, colors }: { points: WinPoint[]; te
         <text x={P.l + 8} y={H - P.b - 8} fontSize={12} fontWeight={600} fill="var(--text-2)">
           {teams[1]} ↓
         </text>
+        {(() => {
+          // stack labels on separate rows when they would collide horizontally
+          const placed: { x: number; row: number; above: boolean }[] = []
+          return swings.map((s) => {
+            const pt = points[s.i]
+            if (!pt) return { s, row: 0 }
+            const above = pt.p < 0.5
+            let row = 0
+            while (placed.some((q) => q.above === above && q.row === row && Math.abs(q.x - x(pt.i)) < 150)) row++
+            placed.push({ x: x(pt.i), row, above })
+            return { s, row }
+          })
+        })().map(({ s, row }, k) => {
+          const pt = points[s.i]
+          if (!pt) return null
+          const above = pt.p < 0.5
+          const ly = above ? Math.max(P.t + 10, y(pt.p) - 26 - row * 16) : Math.min(H - P.b - 6, y(pt.p) + 30 + row * 16)
+          return (
+            <motion.g key={s.i} initial={{ opacity: 0, y: above ? 6 : -6 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 1.6 + k * 0.15 }}>
+              <line x1={x(pt.i)} x2={x(pt.i)} y1={y(pt.p)} y2={ly + (above ? 4 : -12)} stroke="var(--text-3)" strokeWidth={1} />
+              <circle cx={x(pt.i)} cy={y(pt.p)} r={5} fill="var(--bg-2)" stroke="var(--text)" strokeWidth={2} />
+              <text x={Math.min(W - 90, Math.max(P.l + 4, x(pt.i) - 40))} y={ly} fontSize={10.5} fontWeight={600} fill="var(--text-2)">
+                {s.delta > 0 ? '▲' : '▼'} {Math.abs(Math.round(s.delta))}% · {s.label.length > 22 ? s.label.slice(0, 21) + '…' : s.label}
+              </text>
+            </motion.g>
+          )
+        })}
         {hp && <circle cx={x(hp.i)} cy={y(hp.p)} r={5} fill="var(--text)" stroke="var(--bg-2)" strokeWidth={2} />}
       </svg>
       {hp && (
@@ -397,8 +430,8 @@ export function PartnershipBars({ list, color }: { list: Partnership[]; color: s
             </span>
           </div>
           <div style={{ height: 8, borderRadius: 99, background: 'var(--fill-2)', overflow: 'hidden', display: 'flex', gap: 2 }}>
-            <motion.div style={{ background: color, borderRadius: 99, height: '100%' }} initial={{ width: 0 }} whileInView={{ width: `${(p.aRuns / max) * 100}%` }} viewport={{ once: true }} transition={{ duration: 0.9, ease: [0.32, 0.72, 0, 1] }} />
-            <motion.div style={{ background: color, opacity: 0.45, borderRadius: 99, height: '100%' }} initial={{ width: 0 }} whileInView={{ width: `${(Math.max(0, p.runs - p.aRuns) / max) * 100}%` }} viewport={{ once: true }} transition={{ duration: 0.9, delay: 0.1, ease: [0.32, 0.72, 0, 1] }} />
+            <motion.div style={{ background: color, borderRadius: 99, height: '100%', width: `${(p.aRuns / max) * 100}%`, transformOrigin: 'left center' }} initial={{ scaleX: 0 }} whileInView={{ scaleX: 1 }} viewport={{ once: true }} transition={{ duration: 0.9, ease: [0.32, 0.72, 0, 1] }} />
+            <motion.div style={{ background: color, opacity: 0.45, borderRadius: 99, height: '100%', width: `${(Math.max(0, p.runs - p.aRuns) / max) * 100}%`, transformOrigin: 'left center' }} initial={{ scaleX: 0 }} whileInView={{ scaleX: 1 }} viewport={{ once: true }} transition={{ duration: 0.9, delay: 0.1, ease: [0.32, 0.72, 0, 1] }} />
           </div>
         </div>
       ))}
@@ -412,8 +445,25 @@ export const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10
 
 const ZONES_RHB = ['Fine leg', 'Square leg', 'Mid-wicket', 'Long on', 'Long off', 'Cover', 'Point', 'Third man']
 
-export function WagonWheel({ zones, color, leftHanded }: { zones: number[]; color: string; leftHanded?: boolean }) {
+export function WagonWheel({ zones, color, leftHanded, shots }: { zones: number[]; color: string; leftHanded?: boolean; shots?: number[][] }) {
   const [hover, setHover] = useState<number | null>(null)
+  const [mode, setMode] = useState<'shots' | 'zones'>(shots?.some((z) => z.some(Boolean)) ? 'shots' : 'zones')
+  // Individual scoring shots drawn as rays inside their zone; length by runs (4s reach the rope, 6s clear it).
+  const rays = useMemo(() => {
+    if (!shots) return []
+    const out: { a: number; len: number; runs: number; zone: number }[] = []
+    shots.forEach((counts, zone) => {
+      const list: number[] = []
+      counts.forEach((n, runs) => {
+        if (runs > 0) for (let k = 0; k < n; k++) list.push(runs)
+      })
+      list.forEach((runs, k) => {
+        const a = ((90 + 45 * zone + (45 * (k + 0.5)) / list.length) * Math.PI) / 180
+        out.push({ a, len: runs >= 6 ? 1.12 : runs === 4 ? 1 : runs === 3 ? 0.72 : runs === 2 ? 0.55 : 0.38, runs, zone })
+      })
+    })
+    return out
+  }, [shots])
   const total = zones.reduce((a, b) => a + b, 0) || 1
   const max = Math.max(...zones, 1)
   const R = 92, c = 110
@@ -435,7 +485,25 @@ export function WagonWheel({ zones, color, leftHanded }: { zones: number[]; colo
         <text x={leftHanded ? 206 : 14} y={c + 4} textAnchor={leftHanded ? 'end' : 'start'} className="axis-label">Leg</text>
         <text x={leftHanded ? 14 : 206} y={c + 4} textAnchor={leftHanded ? 'start' : 'end'} className="axis-label">Off</text>
         <g transform={leftHanded ? 'translate(220,0) scale(-1,1)' : undefined}>
-        {zones.map((z, i) => (
+        {mode === 'shots' &&
+          rays.map((r, k) => (
+            <motion.line
+              key={k}
+              x1={c}
+              y1={c}
+              x2={c + Math.cos(r.a) * R * r.len}
+              y2={c + Math.sin(r.a) * R * r.len}
+              stroke={r.runs >= 6 ? 'var(--purple)' : r.runs === 4 ? 'var(--blue)' : color}
+              strokeWidth={r.runs >= 4 ? 2 : 1.4}
+              strokeLinecap="round"
+              opacity={hover != null && hover !== r.zone ? 0.15 : r.runs >= 4 ? 0.95 : 0.6}
+              initial={{ pathLength: 0 }}
+              whileInView={{ pathLength: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.2 + k * 0.03, ease: [0.2, 0.8, 0.3, 1] }}
+            />
+          ))}
+        {mode === 'zones' && zones.map((z, i) => (
           <motion.path
             key={i}
             d={sector(i, 18 + (z / max) * (R - 18))}
@@ -455,8 +523,17 @@ export function WagonWheel({ zones, color, leftHanded }: { zones: number[]; colo
         </g>
       </svg>
       <div className="stack gap-6" style={{ minWidth: 160 }}>
+        {shots && (
+          <div className="row gap-6" style={{ marginBottom: 4 }}>
+            {(['shots', 'zones'] as const).map((m) => (
+              <button key={m} className={`chip ${mode === m ? 'on' : ''}`} style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => setMode(m)}>
+                {m === 'shots' ? 'Shots' : 'Zones'}
+              </button>
+            ))}
+          </div>
+        )}
         {zones.map((z, i) => (
-          <div key={i} className="row gap-8 foot" style={{ opacity: hover != null && hover !== i ? 0.45 : 1 }}>
+          <div key={i} className="row gap-8 foot" onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)} style={{ opacity: hover != null && hover !== i ? 0.45 : 1 }}>
             <span className="grow muted">{ZONES_RHB[i]}</span>
             <span className="tnum" style={{ fontWeight: 600 }}>
               {z}
@@ -476,7 +553,7 @@ export function WagonWheel({ zones, color, leftHanded }: { zones: number[]; colo
 const LENGTHS = ['Full toss', 'Yorker', 'Full', 'Good', 'Back of length', 'Short']
 const LINES = ['Wide off', 'Off', 'Stumps', 'Leg', 'Wide leg']
 
-export function PitchMap({ map, title }: { map?: number[][][]; title: string }) {
+export function PitchMap({ map, title, threeD = false }: { map?: number[][][]; title: string; threeD?: boolean }) {
   const [hover, setHover] = useState<[number, number] | null>(null)
   if (!map?.length) return null
   const cells = map.flatMap((row) => row.map((c) => c?.[2] ?? 0))
@@ -489,8 +566,13 @@ export function PitchMap({ map, title }: { map?: number[][][]; title: string }) 
       <div className="foot muted" style={{ fontWeight: 600 }}>
         {title} <span className="faint">· {balls} balls</span>
       </div>
-      <div style={{ position: 'relative', padding: '10px 14px', borderRadius: 18, background: 'linear-gradient(180deg, color-mix(in srgb, #c8a56a 28%, var(--fill-2)), color-mix(in srgb, #c8a56a 12%, var(--fill-2)))' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 30px)', gap: 3 }}>
+      <div style={{ perspective: 700 }}>
+      <motion.div
+        animate={{ rotateX: threeD ? 52 : 0, scale: threeD ? 0.92 : 1 }}
+        transition={{ type: 'spring', stiffness: 120, damping: 18 }}
+        style={{ position: 'relative', padding: '10px 14px', borderRadius: 18, transformStyle: 'preserve-3d', background: 'linear-gradient(180deg, color-mix(in srgb, #c8a56a 28%, var(--fill-2)), color-mix(in srgb, #c8a56a 12%, var(--fill-2)))' }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 30px)', gap: 3, transformStyle: 'preserve-3d' }}>
           {map.map((row, ri) =>
             row.map((c, ci) => {
               const n = c?.[2] ?? 0
@@ -514,14 +596,26 @@ export function PitchMap({ map, title }: { map?: number[][][]; title: string }) 
                     color: n / max > 0.5 ? 'white' : 'var(--text-2)',
                     outline: c?.[1] ? '2px solid var(--red)' : 'none',
                     outlineOffset: -2,
+                    position: 'relative',
+                    transformStyle: 'preserve-3d',
                   }}
                 >
-                  {n || ''}
+                  {threeD && n > 0 && (
+                    <motion.span
+                      aria-hidden
+                      initial={{ height: 0 }}
+                      animate={{ height: 6 + (n / max) * 46 }}
+                      transition={{ type: 'spring', stiffness: 140, damping: 16, delay: (ri * 5 + ci) * 0.015 }}
+                      style={{ position: 'absolute', left: 4, right: 4, bottom: '50%', background: c?.[1] ? 'var(--red)' : 'var(--accent)', borderRadius: 4, transformOrigin: 'bottom', transform: 'rotateX(-90deg)', opacity: 0.9, boxShadow: '0 0 0 0.5px rgba(255,255,255,.4) inset' }}
+                    />
+                  )}
+                  {!threeD && (n || '')}
                 </motion.div>
               )
             }),
           )}
         </div>
+      </motion.div>
       </div>
       <div className="cap faint" style={{ minHeight: 16, textAlign: 'center' }}>
         {hover && hv ? `${LENGTHS[hover[0]]} · ${LINES[hover[1]]}: ${hv[2]} balls, ${hv[0]} runs${hv[1] ? `, ${hv[1]} wkt` : ''}` : 'Bowler’s view · red outline = wicket'}
@@ -550,5 +644,181 @@ export function CompareBar({ label, a, b, colors, fmt = (v: number) => String(v)
         <motion.div style={{ background: colors[1], borderRadius: 99 }} initial={{ flexGrow: 1 }} whileInView={{ flexGrow: b / t || 0.001 }} viewport={{ once: true }} transition={{ duration: 1 }} />
       </div>
     </div>
+  )
+}
+
+/* ---------- Simulator fan chart ---------- */
+
+export function FanChart({ bands, limitOvers, target, color, actual }: { bands: { over: number; p10: number; p25: number; p50: number; p75: number; p90: number }[]; limitOvers: number; target?: number; color: string; actual?: { over: number; runs: number }[] }) {
+  const W = 680, H = 240, P = { l: 40, r: 14, t: 12, b: 26 }
+  const h = useHover()
+  const maxR = niceMax(Math.max(target ?? 0, ...bands.map((b) => b.p90), ...(actual ?? []).map((a) => a.runs), 10), 50)
+  const x = (o: number) => P.l + (o / Math.max(1, limitOvers)) * (W - P.l - P.r)
+  const y = (r: number) => H - P.b - (r / maxR) * (H - P.t - P.b)
+  const area = (lo: keyof (typeof bands)[0], hi: keyof (typeof bands)[0]) =>
+    bands.map((b, i) => `${i ? 'L' : 'M'}${x(b.over)},${y(b[hi] as number)}`).join('') +
+    [...bands].reverse().map((b) => `L${x(b.over)},${y(b[lo] as number)}`).join('') +
+    'Z'
+  const hov = h.pt ? bands.reduce((m, b) => (Math.abs(x(b.over) - h.pt!.x) < Math.abs(x(m.over) - h.pt!.x) ? b : m), bands[0]) : null
+  return (
+    <div style={{ position: 'relative' }}>
+      <svg ref={h.ref} className="chart" viewBox={`0 0 ${W} ${H}`} onPointerMove={(e) => h.onMove(e, W, H)} onPointerLeave={h.clear} role="img" aria-label="Simulated score range by over">
+        {[0, maxR / 2, maxR].map((t) => (
+          <g key={t}>
+            <line className="grid-line" x1={P.l} x2={W - P.r} y1={y(t)} y2={y(t)} />
+            <text className="axis-label" x={P.l - 8} y={y(t) + 4} textAnchor="end">
+              {Math.round(t)}
+            </text>
+          </g>
+        ))}
+        <motion.path d={area('p10', 'p90')} fill={color} initial={{ opacity: 0 }} animate={{ opacity: 0.14 }} transition={{ duration: 0.8 }} />
+        <motion.path d={area('p25', 'p75')} fill={color} initial={{ opacity: 0 }} animate={{ opacity: 0.26 }} transition={{ duration: 0.8, delay: 0.15 }} />
+        <motion.path d={bands.map((b, i) => `${i ? 'L' : 'M'}${x(b.over)},${y(b.p50)}`).join('')} fill="none" stroke={color} strokeWidth={2} strokeDasharray="5 4" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1 }} />
+        {actual && actual.length > 1 && <path d={actual.map((a, i) => `${i ? 'L' : 'M'}${x(a.over)},${y(a.runs)}`).join('')} fill="none" stroke="var(--text)" strokeWidth={2.2} />}
+        {target ? (
+          <g>
+            <line x1={P.l} x2={W - P.r} y1={y(target)} y2={y(target)} stroke="var(--red)" strokeDasharray="4 4" />
+            <text x={W - P.r - 4} y={y(target) - 6} textAnchor="end" fontSize={11} fontWeight={600} fill="var(--red)">
+              Target {target}
+            </text>
+          </g>
+        ) : null}
+        {Array.from({ length: Math.floor(limitOvers / (limitOvers > 20 ? 10 : 5)) + 1 }, (_, i) => i * (limitOvers > 20 ? 10 : 5)).map((o) => (
+          <text key={o} className="axis-label" x={x(o)} y={H - 8} textAnchor="middle">
+            {o}
+          </text>
+        ))}
+        {hov && <line x1={x(hov.over)} x2={x(hov.over)} y1={P.t} y2={H - P.b} stroke="var(--text-3)" strokeDasharray="3 3" />}
+      </svg>
+      {hov && (
+        <Tip x={x(hov.over)} y={y(hov.p75)} w={W} h={H}>
+          <div style={{ fontWeight: 600 }}>After {hov.over} overs</div>
+          <div className="tnum">Most likely {hov.p50} · range {hov.p10}–{hov.p90}</div>
+        </Tip>
+      )}
+    </div>
+  )
+}
+
+/* ---------- Partnership pressure (small multiple) ---------- */
+
+export function PressureChart({ points, color, height = 70 }: { points: { k: number; rr: number; dots: number }[]; color: string; height?: number }) {
+  const W = 300, H = height
+  const n = Math.max(points.length, 2)
+  const maxRR = Math.max(12, ...points.map((p) => p.rr))
+  const x = (k: number) => ((k - 1) / (n - 1)) * W
+  const y = (v: number) => H - 4 - (v / maxRR) * (H - 10)
+  return (
+    <svg className="chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Rolling run rate and dot-ball pressure">
+      {points.map((p) =>
+        p.dots >= 3 ? <rect key={p.k} x={x(p.k) - W / n / 2} y={0} width={W / n} height={H} fill="var(--red)" opacity={Math.min(0.35, 0.08 * p.dots)} /> : null,
+      )}
+      <motion.path d={points.map((p, i) => `${i ? 'L' : 'M'}${x(p.k)},${y(p.rr)}`).join('')} fill="none" stroke={color} strokeWidth={2} initial={{ pathLength: 0 }} whileInView={{ pathLength: 1 }} viewport={{ once: true }} transition={{ duration: 1 }} />
+    </svg>
+  )
+}
+
+/* ---------- Radar (team profiles) ---------- */
+
+export function RadarChart({ axes, series, size = 300 }: { axes: string[]; series: { label: string; color: string; values: number[] }[]; size?: number }) {
+  const c = size / 2, R = size / 2 - 46
+  const pt = (i: number, v: number) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / axes.length
+    return [c + Math.cos(a) * R * v, c + Math.sin(a) * R * v]
+  }
+  const [hover, setHover] = useState<number | null>(null)
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} width="100%" style={{ maxWidth: size }} role="img" aria-label="Team profile radar">
+      {[0.25, 0.5, 0.75, 1].map((r) => (
+        <polygon key={r} points={axes.map((_, i) => pt(i, r).join(',')).join(' ')} fill="none" stroke="var(--hair)" />
+      ))}
+      {axes.map((a, i) => {
+        const [x2, y2] = pt(i, 1)
+        const [lx, ly] = pt(i, 1.2)
+        return (
+          <g key={a}>
+            <line x1={c} y1={c} x2={x2} y2={y2} stroke="var(--hair)" />
+            <text x={lx} y={ly + 4} textAnchor="middle" className="axis-label" style={{ fontSize: 10.5 }}>
+              {a}
+            </text>
+          </g>
+        )
+      })}
+      {series.map((s, k) => (
+        <motion.polygon
+          key={s.label}
+          points={s.values.map((v, i) => pt(i, Math.max(0.04, Math.min(1, v))).join(',')).join(' ')}
+          fill={s.color}
+          fillOpacity={hover == null ? 0.16 : hover === k ? 0.32 : 0.04}
+          stroke={s.color}
+          strokeWidth={2}
+          strokeOpacity={hover == null || hover === k ? 1 : 0.2}
+          onPointerEnter={() => setHover(k)}
+          onPointerLeave={() => setHover(null)}
+          initial={{ scale: 0, opacity: 0 }}
+          whileInView={{ scale: 1, opacity: 1 }}
+          viewport={{ once: true }}
+          style={{ transformOrigin: `${c}px ${c}px` }}
+          transition={{ type: 'spring', stiffness: 120, damping: 16, delay: k * 0.08 }}
+        />
+      ))}
+    </svg>
+  )
+}
+
+/* ---------- Form guide: last N innings ---------- */
+
+export function FormChart({ items, color }: { items: { label: string; value: number; sub: string; out?: boolean; good?: boolean }[]; color: string }) {
+  const max = Math.max(...items.map((i) => i.value), 1)
+  const [hover, setHover] = useState<number | null>(null)
+  return (
+    <div style={{ position: 'relative' }}>
+      <div className="row gap-6" style={{ alignItems: 'flex-end', height: 150 }}>
+        {items.map((it, i) => (
+          <div key={i} className="stack" style={{ flex: 1, alignItems: 'center', gap: 6, height: '100%', justifyContent: 'flex-end' }} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)}>
+            <span className="tnum cap" style={{ fontWeight: 700, color: hover === i ? 'var(--text)' : 'var(--text-2)' }}>
+              {it.value}
+              {it.out === false ? '*' : ''}
+            </span>
+            <motion.div
+              initial={{ scaleY: 0 }}
+              whileInView={{ scaleY: 1 }}
+              viewport={{ once: true }}
+              transition={{ type: 'spring', stiffness: 120, damping: 18, delay: i * 0.04 }}
+              style={{ height: `${Math.max(3, (it.value / max) * 100)}%`, transformOrigin: 'bottom', width: '100%', maxWidth: 34, borderRadius: '8px 8px 3px 3px', background: it.good ? color : `color-mix(in srgb, ${color} 45%, var(--fill))`, opacity: hover == null || hover === i ? 1 : 0.5 }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="row gap-6" style={{ marginTop: 6 }}>
+        {items.map((it, i) => (
+          <span key={i} className="cap faint ellipsis" style={{ flex: 1, textAlign: 'center', fontSize: 10 }}>
+            {it.label}
+          </span>
+        ))}
+      </div>
+      {hover != null && (
+        <div className="foot muted" style={{ marginTop: 8, textAlign: 'center' }}>
+          {items[hover].sub}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ---------- Tiny worm (multi-view) ---------- */
+
+export function MiniWorm({ innings, colors, height = 64 }: { innings: InningsAgg[]; colors: string[]; height?: number }) {
+  const W = 300, H = height
+  const maxOver = Math.max(...innings.map((i) => Math.max(i.limit / 6 || 0, i.overs.length)), 1)
+  const maxR = Math.max(...innings.map((i) => i.total), 10) * 1.08
+  const x = (o: number) => (o / maxOver) * W
+  const y = (r: number) => H - 2 - (r / maxR) * (H - 6)
+  return (
+    <svg className="chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Worm">
+      {innings.map((inn, k) => (
+        <path key={k} d={['M0,' + y(0), ...inn.overs.map((o, j) => `L${x(j + 1)},${y(o.total)}`)].join('')} fill="none" stroke={colors[k] ?? 'var(--text-3)'} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+      ))}
+    </svg>
   )
 }

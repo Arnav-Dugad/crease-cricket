@@ -115,4 +115,6 @@ export interface WikiInfo {
   url?: string
   image?: string | null
   original?: string | null
+  lat?: number | null
+  lon?: number | null
 }

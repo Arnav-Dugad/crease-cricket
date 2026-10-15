@@ -21,6 +21,8 @@ export interface BatEntry {
   captain: boolean
   keeper: boolean
   wagon: number[]
+  /** per zone: counts of scoring shots by run value (index = runs) */
+  wagonShots: number[][]
   control?: number
   shot?: string
   summary?: number[]
@@ -157,6 +159,7 @@ export function buildScorecards(summary: J): InningsCard[] {
               captain: !!p.captain,
               keeper,
               wagon: (bt.wagonZone ?? []).map((z: J) => +z.runs || 0),
+              wagonShots: (bt.wagonZone ?? []).map((z: J) => (z.runsSummary ?? []).map((x: J) => +x || 0)),
               control: bt.controlPercentage,
               shot: bt.preferredShot?.shotName,
               summary: (bt.runsSummary ?? []).map((x: J) => +x || 0),

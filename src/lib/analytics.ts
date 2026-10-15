@@ -1,3 +1,4 @@
+import type { TrainedWinModel } from './hist'
 import type { Ball } from './types'
 
 export const isWide = (b: Ball) => /wide/i.test(b.t)
@@ -221,7 +222,8 @@ export interface WinPoint {
   w: boolean
 }
 
-export function winProbSeries(innings: InningsAgg[]): WinPoint[] {
+/** Win probability after every ball. Uses the trained (Cricsheet) model when provided, else the heuristic. */
+export function winProbSeries(innings: InningsAgg[], trained?: TrainedWinModel | null): WinPoint[] {
   if (innings.length === 0 || innings.length > 2) return []
   const limit = innings[0].limit
   if (!limit || limit > 300) return []
@@ -232,7 +234,8 @@ export function winProbSeries(innings: InningsAgg[]): WinPoint[] {
   for (const b of first.balls) {
     if (isLegal(b)) legal++
     const lim = b.limit || limit
-    pts.push({ i: ++i, inn: 1, over: b.ov, p: firstInningsWinProb(b.runs, lim - legal, 10 - b.wkts, lim), w: b.w })
+    const p = trained ? trained.first(b.runs, legal, b.wkts) : firstInningsWinProb(b.runs, lim - legal, 10 - b.wkts, lim)
+    pts.push({ i: ++i, inn: 1, over: b.ov, p: Math.min(0.99, Math.max(0.01, p)), w: b.w })
   }
   const second = innings[1]
   if (second) {
@@ -242,15 +245,16 @@ export function winProbSeries(innings: InningsAgg[]): WinPoint[] {
       if (isLegal(b)) legal++
       const lim = b.limit || limit
       const tgt = b.target || target
-      const p2 = chaseWinProb(tgt - b.runs, b.rem ?? lim - legal, 10 - b.wkts, lim)
+      const done = b.runs >= tgt ? 1 : b.wkts >= 10 || legal >= lim ? (b.runs === tgt - 1 ? 0.5 : 0) : null
+      const p2 = done ?? (trained ? trained.chase(tgt, b.runs, legal, b.wkts, lim) : chaseWinProb(tgt - b.runs, b.rem ?? lim - legal, 10 - b.wkts, lim))
       pts.push({ i: ++i, inn: 2, over: b.ov, p: 1 - p2, w: b.w })
     }
   }
   return pts
 }
 
-export function currentWinProb(innings: InningsAgg[]): { p: number; label: string } | null {
-  const s = winProbSeries(innings)
+export function currentWinProb(innings: InningsAgg[], trained?: TrainedWinModel | null): { p: number; label: string } | null {
+  const s = winProbSeries(innings, trained)
   if (s.length < 2) return null
   return { p: s[s.length - 1].p, label: 'model' }
 }

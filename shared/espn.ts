@@ -19,11 +19,10 @@ export const ESPN_ALT = 'https://site.web.api.espn.com/apis'
 export type Getter = (url: string, ttl: number) => Promise<Json>
 
 export class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
+  status: number
+  constructor(status: number, message: string) {
     super(message)
+    this.status = status
   }
 }
 
@@ -107,7 +106,7 @@ async function allBalls(get: Getter, league: string, event: string) {
 
 async function wiki(get: Getter, q: string) {
   const u =
-    'https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrlimit=1&prop=pageimages|extracts|info' +
+    'https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrlimit=1&prop=pageimages|extracts|info|coordinates' +
     '&inprop=url&piprop=original|thumbnail&pithumbsize=1600&exintro=1&explaintext=1&exsentences=4&format=json&origin=*' +
     `&gsrsearch=${encodeURIComponent(q)}`
   const d = await get(u, 86400)
@@ -119,7 +118,126 @@ async function wiki(get: Getter, q: string) {
     url: page.fullurl,
     image: page.thumbnail?.source?.split('?')[0] ?? null,
     original: page.original?.source?.split('?')[0] ?? null,
+    lat: page.coordinates?.[0]?.lat ?? null,
+    lon: page.coordinates?.[0]?.lon ?? null,
   }
+}
+
+/* ---------- Wikidata: real photos keyed by ESPNcricinfo ID (property P2697) ---------- */
+
+const commonsThumb = (fileUrl: string, width: number) => {
+  const file = decodeURIComponent(fileUrl.split('/Special:FilePath/')[1] ?? '')
+  return file ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=${width}` : null
+}
+
+async function people(get: Getter, ids: string[]) {
+  if (!ids.length) return {}
+  const sparql =
+    'SELECT ?id ?item ?img ?desc WHERE { VALUES ?id { ' +
+    ids.map((i) => `"${i}"`).join(' ') +
+    ' } ?item wdt:P2697 ?id . OPTIONAL { ?item wdt:P18 ?img } OPTIONAL { ?item schema:description ?desc FILTER(lang(?desc) = "en") } }'
+  const d = await get(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(sparql)}`, 7 * 86400)
+  const out: Record<string, { img: string | null; img2x: string | null; qid: string; desc?: string }> = {}
+  for (const b of d?.results?.bindings ?? []) {
+    const id = b.id.value
+    if (out[id]?.img) continue
+    out[id] = {
+      img: b.img ? commonsThumb(b.img.value, 330) : null,
+      img2x: b.img ? commonsThumb(b.img.value, 660) : null,
+      qid: b.item.value.split('/').pop(),
+      desc: b.desc?.value,
+    }
+  }
+  return out
+}
+
+/* ---------- TheSportsDB: player cutouts, team badges & artwork (free key) ---------- */
+
+const TSDB = 'https://www.thesportsdb.com/api/v1/json/123'
+
+async function tsdbPlayer(get: Getter, name: string) {
+  const d = await get(`${TSDB}/searchplayers.php?p=${encodeURIComponent(name.replace(/\s+/g, '_'))}`, 7 * 86400)
+  const p = (d?.player ?? []).find((x: Json) => x.strSport === 'Cricket')
+  if (!p) return null
+  return { id: p.idPlayer, cutout: p.strCutout || null, render: p.strRender || null, thumb: p.strThumb || null, team: p.strTeam, nationality: p.strNationality }
+}
+
+async function tsdbTeam(get: Getter, name: string) {
+  const d = await get(`${TSDB}/searchteams.php?t=${encodeURIComponent(name.replace(/\s+/g, '_'))}`, 7 * 86400)
+  const t = (d?.teams ?? []).find((x: Json) => x.strSport === 'Cricket')
+  if (!t) return null
+  return {
+    id: t.idTeam,
+    badge: t.strBadge || null,
+    logo: t.strLogo || null,
+    banner: t.strBanner || null,
+    jersey: t.strEquipment || null,
+    fanart: [t.strFanart1, t.strFanart2, t.strFanart3, t.strFanart4].filter(Boolean),
+    stadium: t.strStadium || null,
+    stadiumThumb: t.strStadiumThumb || null,
+    founded: t.intFormedYear || null,
+    description: (t.strDescriptionEN ?? '').slice(0, 900) || null,
+    website: t.strWebsite || null,
+  }
+}
+
+/* ---------- Open-Meteo: weather & conditions at the ground ---------- */
+
+async function weather(get: Getter, lat: number, lon: number) {
+  const u =
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    '&current=temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,is_day' +
+    '&hourly=temperature_2m,precipitation_probability,weather_code,dew_point_2m,relative_humidity_2m&forecast_days=3&timezone=auto'
+  const d = await get(u, 900)
+  return { current: d.current, hourly: d.hourly, timezone: d.timezone, utcOffset: d.utc_offset_seconds }
+}
+
+async function geocode(get: Getter, q: string) {
+  const d = await get(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1`, 30 * 86400)
+  const r = d?.results?.[0]
+  return r ? { lat: r.latitude, lon: r.longitude, name: r.name, country: r.country } : null
+}
+
+/* ---------- ICC team rankings, parsed from Wikipedia's maintained tables ---------- */
+
+const RANK_PAGES: [string, string][] = [
+  ["Men's", "ICC_Men's_Test_Team_Rankings"],
+  ["Men's", "ICC_Men's_ODI_Team_Rankings"],
+  ["Men's", "ICC_Men's_T20I_Team_Rankings"],
+  ["Women's", "ICC_Women's_ODI_and_T20I_Team_Rankings"],
+]
+
+export function parseRankTables(wikitext: string) {
+  const out: { title: string; asOf: string | null; rows: { code: string; matches: number; points: number; rating: number }[] }[] = []
+  for (const t of wikitext.match(/\{\|[\s\S]*?\n\|\}/g) ?? []) {
+    const title = t.match(/\|\+\s*([^\n]+)/)?.[1]?.trim() ?? ''
+    if (!/rankings/i.test(title)) continue
+    const rows = [...t.matchAll(/\{\{crw?\|([A-Z]+)\}\}[}\s]*\|\|\s*([\d,]+)\s*\|\|\s*([\d,]+)\s*\|\|\s*([\d,]+)/g)].map((m) => ({
+      code: m[1],
+      matches: +m[2].replace(/,/g, ''),
+      points: +m[3].replace(/,/g, ''),
+      rating: +m[4].replace(/,/g, ''),
+    }))
+    const asOf = t.match(/(\d{1,2} [A-Z][a-z]+ \d{4})/)?.[1] ?? null
+    if (rows.length) out.push({ title, asOf, rows })
+  }
+  return out
+}
+
+async function rankings(get: Getter) {
+  const pages = await Promise.all(
+    RANK_PAGES.map(([, page]) =>
+      get(`https://en.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(page)}&prop=wikitext&format=json&origin=*&redirects=1`, 6 * 3600).catch(() => null),
+    ),
+  )
+  const tables = pages.flatMap((p, i) =>
+    parseRankTables(p?.parse?.wikitext?.['*'] ?? '').map((t) => ({
+      ...t,
+      gender: RANK_PAGES[i][0],
+      format: /test/i.test(t.title) ? 'Test' : /odi/i.test(t.title) ? 'ODI' : 'T20I',
+    })),
+  )
+  return { tables, source: 'Wikipedia (ICC rankings tables)' }
 }
 
 /** Trim the heavy summary payload. */
@@ -231,6 +349,44 @@ export async function resolve(pathWithQuery: string, get: Getter): Promise<Resol
       return { id: i.id, name: i.displayName, team: t?.displayName ?? null, teamLogo: t?.logos?.[0]?.href ?? null }
     })
     return { data, ttl: 3600 }
+  }
+
+  if (p === '/api/people') {
+    const ids = [...new Set((q.get('ids') ?? '').split(',').filter((x) => /^\d{1,9}$/.test(x)))].sort().slice(0, 80)
+    return { data: await people(get, ids), ttl: 7 * 86400 }
+  }
+
+  if (p === '/api/tsdb/player') {
+    const name = q.get('name')
+    if (!name) throw new HttpError(400, 'name required')
+    return { data: await tsdbPlayer(get, name), ttl: 7 * 86400 }
+  }
+
+  if (p === '/api/tsdb/team') {
+    const name = q.get('name')
+    if (!name) throw new HttpError(400, 'name required')
+    return { data: await tsdbTeam(get, name), ttl: 7 * 86400 }
+  }
+
+  if (p === '/api/weather') {
+    let lat = Number(q.get('lat'))
+    let lon = Number(q.get('lon'))
+    const place = q.get('q')
+    if ((!q.get('lat') || !isFinite(lat) || !isFinite(lon)) && place) {
+      const g = await geocode(get, place)
+      if (!g) throw new HttpError(404, 'Place not found')
+      lat = g.lat
+      lon = g.lon
+    }
+    if (!isFinite(lat) || !isFinite(lon)) throw new HttpError(400, 'lat/lon or q required')
+    return { data: { lat, lon, ...(await weather(get, +lat.toFixed(3), +lon.toFixed(3))) }, ttl: 900 }
+  }
+
+  if (p === '/api/rankings') return { data: await rankings(get), ttl: 6 * 3600 }
+
+  if ((m = p.match(/^\/api\/standings\/(\d+)$/))) {
+    const d = await get(`${ESPN}/v2/sports/cricket/${m[1]}/standings`, 600)
+    return { data: d, ttl: 1800 }
   }
 
   if (p === '/api/wiki') {

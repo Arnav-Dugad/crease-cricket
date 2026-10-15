@@ -1,4 +1,3 @@
-import { AnimatePresence } from 'motion/react'
 import { lazy, Suspense } from 'react'
 import { Link, Route, Routes, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -12,6 +11,9 @@ const SeriesList = lazy(() => import('./pages/SeriesList'))
 const Series = lazy(() => import('./pages/Series'))
 const Player = lazy(() => import('./pages/Player'))
 const News = lazy(() => import('./pages/News'))
+const Rankings = lazy(() => import('./pages/Rankings'))
+const Team = lazy(() => import('./pages/Team'))
+const Multi = lazy(() => import('./pages/Multi'))
 
 function Fallback() {
   return (
@@ -34,23 +36,30 @@ function NotFound() {
   )
 }
 
+const routes: [string, () => React.ReactElement][] = [
+  ['/', () => <Home />],
+  ['/matches', () => <Matches />],
+  ['/match/:league/:event', () => <Match />],
+  ['/series', () => <SeriesList />],
+  ['/series/:league', () => <Series />],
+  ['/player/:id', () => <Player />],
+  ['/team/:id/:name?', () => <Team />],
+  ['/rankings', () => <Rankings />],
+  ['/multi', () => <Multi />],
+  ['/news', () => <News />],
+  ['*', () => <NotFound />],
+]
+
 export default function App() {
   const loc = useLocation()
   return (
     <Shell>
       <Suspense fallback={<Fallback />}>
-        <AnimatePresence mode="wait">
-          <Routes location={loc} key={loc.pathname}>
-            <Route path="/" element={<ErrorBoundary key={loc.pathname}><Home /></ErrorBoundary>} />
-            <Route path="/matches" element={<ErrorBoundary key={loc.pathname}><Matches /></ErrorBoundary>} />
-            <Route path="/match/:league/:event" element={<ErrorBoundary key={loc.pathname}><Match /></ErrorBoundary>} />
-            <Route path="/series" element={<ErrorBoundary key={loc.pathname}><SeriesList /></ErrorBoundary>} />
-            <Route path="/series/:league" element={<ErrorBoundary key={loc.pathname}><Series /></ErrorBoundary>} />
-            <Route path="/player/:id" element={<ErrorBoundary key={loc.pathname}><Player /></ErrorBoundary>} />
-            <Route path="/news" element={<ErrorBoundary key={loc.pathname}><News /></ErrorBoundary>} />
-            <Route path="*" element={<ErrorBoundary key={loc.pathname}><NotFound /></ErrorBoundary>} />
-          </Routes>
-        </AnimatePresence>
+        <Routes location={loc}>
+          {routes.map(([path, el]) => (
+            <Route key={path} path={path} element={<ErrorBoundary key={loc.pathname}>{el()}</ErrorBoundary>} />
+          ))}
+        </Routes>
       </Suspense>
     </Shell>
   )
