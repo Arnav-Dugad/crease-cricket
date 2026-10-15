@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { ESPN, ESPN_ALT, resolve } from '../../shared/espn'
 
 /**
  * Tiny stale-while-revalidate data layer.
@@ -12,14 +13,38 @@ const listeners = new Map<string, Set<() => void>>()
 
 const emit = (key: string) => listeners.get(key)?.forEach((l) => l())
 
+/* ---------- transport: edge proxy first, direct-to-source fallback ---------- */
+
+// Route kinds whose edge fetch was recently blocked upstream; go direct for a while.
+const directUntil = new Map<string, number>()
+const kindOf = (path: string) => path.split('/')[2] ?? ''
+
+async function direct(url: string) {
+  let r = await fetch(url).catch(() => null)
+  if ((!r || !r.ok) && url.startsWith(ESPN)) r = await fetch(url.replace(ESPN, ESPN_ALT))
+  if (!r || !r.ok) throw new Error(`Request failed (${r?.status ?? 'network'})`)
+  return r.json()
+}
+
+async function load(path: string): Promise<unknown> {
+  const kind = kindOf(path)
+  if ((directUntil.get(kind) ?? 0) > Date.now()) return (await resolve(path, direct)).data
+  try {
+    const r = await fetch(path)
+    if (r.ok) return await r.json()
+    if (r.status !== 403 && r.status < 500) throw new Error(`Request failed (${r.status})`)
+  } catch (e) {
+    if ((e as Error).message.startsWith('Request failed')) throw e
+  }
+  // Edge was blocked or unreachable — run the same data layer straight from the browser.
+  directUntil.set(kind, Date.now() + 10 * 60_000)
+  return (await resolve(path, direct)).data
+}
+
 export async function fetchJSON<T>(path: string, force = false): Promise<T> {
   const e = store.get(path)
   if (e?.promise && !force) return e.promise as Promise<T>
-  const promise = fetch(path)
-    .then(async (r) => {
-      if (!r.ok) throw new Error(`Request failed (${r.status})`)
-      return r.json()
-    })
+  const promise = load(path)
     .then((data) => {
       store.set(path, { data, at: Date.now() })
       emit(path)
