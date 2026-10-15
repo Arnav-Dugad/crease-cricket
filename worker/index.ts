@@ -13,7 +13,7 @@ interface Env {
 }
 
 // Bump to invalidate every edge-cached API response after a data-shape change.
-const CACHE_VERSION = '3'
+const CACHE_VERSION = '4'
 
 const UA = 'Mozilla/5.0 (compatible; CreaseCricket/1.0; +https://github.com/Arnav-Dugad/crease-cricket)'
 
@@ -41,6 +41,12 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url)
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req)
+    if (url.pathname === '/api/log' && req.method === 'POST') {
+      // Client-side errors land in Workers Logs (observability is enabled in wrangler.jsonc).
+      const body = (await req.text()).slice(0, 4000)
+      console.error('[client-error]', body)
+      return new Response(null, { status: 204 })
+    }
     if (req.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*' } })
 
     const cache = (caches as unknown as { default: Cache }).default

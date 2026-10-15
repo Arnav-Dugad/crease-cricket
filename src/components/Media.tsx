@@ -3,8 +3,8 @@ import { espnImg, hashColor, isDefaultHeadshot } from '../lib/normalize'
 import { useApi } from '../lib/api'
 import type { WikiInfo } from '../lib/types'
 
-const initials = (n: string) =>
-  n
+const initials = (n: string | undefined) =>
+  (n ?? '')
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)

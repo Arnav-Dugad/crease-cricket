@@ -69,11 +69,11 @@ function slimBall(i: Json) {
     target: inn.target,
     limit: inn.ballLimit,
     rem: inn.remainingBalls,
-    bat: i.batsman?.athlete
+    bat: i.batsman?.athlete?.id
       ? { id: i.batsman.athlete.id, n: i.batsman.athlete.displayName, r: i.batsman.totalRuns, b: i.batsman.faced, '4': i.batsman.fours, '6': i.batsman.sixes }
       : null,
-    nsb: i.otherBatsman?.athlete ? { id: i.otherBatsman.athlete.id, n: i.otherBatsman.athlete.displayName, r: i.otherBatsman.totalRuns, b: i.otherBatsman.faced } : null,
-    bowl: i.bowler?.athlete ? { id: i.bowler.athlete.id, n: i.bowler.athlete.displayName, o: i.bowler.overs, r: i.bowler.conceded, w: i.bowler.wickets, m: i.bowler.maidens } : null,
+    nsb: i.otherBatsman?.athlete?.id ? { id: i.otherBatsman.athlete.id, n: i.otherBatsman.athlete.displayName, r: i.otherBatsman.totalRuns, b: i.otherBatsman.faced } : null,
+    bowl: i.bowler?.athlete?.id ? { id: i.bowler.athlete.id, n: i.bowler.athlete.displayName, o: i.bowler.overs, r: i.bowler.conceded, w: i.bowler.wickets, m: i.bowler.maidens } : null,
     w: !!i.dismissal?.dismissal,
     wt: i.dismissal?.type || '',
     wtext: stripHtml(i.dismissal?.text),
@@ -98,7 +98,8 @@ async function allBalls(get: Getter, league: string, event: string) {
   const items = [first, ...rest].flatMap((p: Json) => p.commentary?.items ?? [])
   const seen = new Set<string>()
   const balls = items
-    .filter((i: Json) => i.over && !seen.has(i.id) && seen.add(i.id))
+    // Pre-match ESPN emits a placeholder "ball" (no over, no players) — drop it.
+    .filter((i: Json) => i.over?.number > 0 && (i.batsman?.athlete?.id || i.bowler?.athlete?.id) && !seen.has(i.id) && seen.add(i.id))
     .map(slimBall)
     .sort((a: Json, b: Json) => a.inn - b.inn || a.seq - b.seq)
   return { balls, partial: pages > MAX, pages }

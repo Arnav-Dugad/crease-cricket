@@ -1,6 +1,7 @@
 import { AnimatePresence } from 'motion/react'
 import { lazy, Suspense } from 'react'
 import { Link, Route, Routes, useLocation } from 'react-router-dom'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Shell } from './components/Shell'
 import { Skel } from './components/UI'
 import Home from './pages/Home'
@@ -40,14 +41,14 @@ export default function App() {
       <Suspense fallback={<Fallback />}>
         <AnimatePresence mode="wait">
           <Routes location={loc} key={loc.pathname}>
-            <Route path="/" element={<Home />} />
-            <Route path="/matches" element={<Matches />} />
-            <Route path="/match/:league/:event" element={<Match />} />
-            <Route path="/series" element={<SeriesList />} />
-            <Route path="/series/:league" element={<Series />} />
-            <Route path="/player/:id" element={<Player />} />
-            <Route path="/news" element={<News />} />
-            <Route path="*" element={<NotFound />} />
+            <Route path="/" element={<ErrorBoundary key={loc.pathname}><Home /></ErrorBoundary>} />
+            <Route path="/matches" element={<ErrorBoundary key={loc.pathname}><Matches /></ErrorBoundary>} />
+            <Route path="/match/:league/:event" element={<ErrorBoundary key={loc.pathname}><Match /></ErrorBoundary>} />
+            <Route path="/series" element={<ErrorBoundary key={loc.pathname}><SeriesList /></ErrorBoundary>} />
+            <Route path="/series/:league" element={<ErrorBoundary key={loc.pathname}><Series /></ErrorBoundary>} />
+            <Route path="/player/:id" element={<ErrorBoundary key={loc.pathname}><Player /></ErrorBoundary>} />
+            <Route path="/news" element={<ErrorBoundary key={loc.pathname}><News /></ErrorBoundary>} />
+            <Route path="*" element={<ErrorBoundary key={loc.pathname}><NotFound /></ErrorBoundary>} />
           </Routes>
         </AnimatePresence>
       </Suspense>
